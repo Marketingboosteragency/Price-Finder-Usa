@@ -630,8 +630,9 @@ def results_page():
     
     search_data = session['last_search']
     products = search_data['products']
+    query = search_data['query']
     
-    # Crear HTML de resultados dinámicamente
+    # Crear HTML de productos
     products_html = ""
     if products:
         for product in products:
@@ -641,6 +642,10 @@ def results_page():
             link = product['link']
             rating = product.get('rating', '')
             reviews = product.get('reviews', '')
+            
+            # Escapar caracteres especiales para HTML
+            title = title.replace("'", "&#39;").replace('"', "&quot;")
+            source = source.replace("'", "&#39;").replace('"', "&quot;")
             
             products_html += f"""
                 <div class="product-card">
@@ -666,6 +671,20 @@ def results_page():
             </div>
         """
     
+    # Crear resumen si hay productos
+    summary_html = ""
+    if products:
+        min_price = min(p['price_numeric'] for p in products)
+        max_price = max(p['price_numeric'] for p in products)
+        summary_html = f"""
+            <div class="results-summary">
+                <h3>✅ Búsqueda Completada</h3>
+                <p><strong>{len(products)} productos verificados</strong> de vendedores de EE.UU.</p>
+                <p>💰 Rango de precios: ${min_price:.2f} - ${max_price:.2f}</p>
+            </div>
+        """
+    
+    # HTML completo de resultados
     results_html = f"""
     <!DOCTYPE html>
     <html lang="es">
@@ -715,22 +734,22 @@ def results_page():
             .btn-secondary {{ background: #6b7280; }}
             .btn-secondary:hover {{ background: #4b5563; }}
             .actions {{ display: flex; gap: 15px; justify-content: center; margin-bottom: 30px; flex-wrap: wrap; }}
+            @media (max-width: 768px) {{
+                .container {{ padding: 15px; }}
+                .header h1 {{ font-size: 2rem; }}
+                .actions {{ flex-direction: column; }}
+                .product-card {{ padding: 20px; }}
+            }}
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
                 <h1>🎉 Resultados de Búsqueda</h1>
-                <p>{search_data['query']} - {len(products)} productos verificados de EE.UU.</p>
+                <p>{query} - {len(products)} productos verificados de EE.UU.</p>
             </div>
 
-            {f'''
-            <div class="results-summary">
-                <h3>✅ Búsqueda Completada</h3>
-                <p><strong>{len(products)} productos verificados</strong> de vendedores de EE.UU.</p>
-                {f"<p>💰 Rango de precios: ${products[0]['price_numeric']:.2f} - ${products[-1]['price_numeric']:.2f}</p>" if products else ""}
-            </div>
-            ''' if products else ''}
+            {summary_html}
 
             <div class="actions">
                 <a href="/search" class="btn">🔍 Nueva Búsqueda</a>
@@ -741,3 +760,23 @@ def results_page():
         </div>
     </body>
     </html>"""
+    
+    return results_html
+
+@app.route('/api/health')
+def health_check():
+    return jsonify({{'status': 'OK', 'message': 'Price Finder USA está funcionando'}})
+
+@app.route('/api/test')
+def test_endpoint():
+    """Endpoint de prueba para verificar que la app funciona"""
+    return jsonify({{
+        'status': 'SUCCESS',
+        'message': '🇺🇸 Price Finder USA está funcionando correctamente!',
+        'timestamp': datetime.now().isoformat(),
+        'version': '1.0'
+    }})
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
