@@ -39,19 +39,22 @@ class USProductFinder:
         for q in queries:
             products = self._search_single(q)
             all_products.extend(products)
-            if len(all_products) >= 15:
+            if len(all_products) >= 20:  # Aumentar a 20 para tener más opciones
                 break
+        
+        print(f"📊 Total products found: {len(all_products)}")
         
         # Eliminar duplicados y ordenar por precio
         unique = []
         seen = set()
         for p in all_products:
             key = p['title'][:30].lower()
-            if key not in seen:
+            if key not in seen and p['link'] != '#':  # Solo únicos con links válidos
                 seen.add(key)
                 unique.append(p)
         
         unique.sort(key=lambda x: x.get('price_numeric', 999))
+        print(f"✅ Returning {len(unique[:15])} unique products with working links")
         return unique[:15]
 
     def _get_search_queries(self, query):
@@ -87,10 +90,10 @@ class USProductFinder:
             for i, item in enumerate(data.get('shopping_results', [])):
                 if self._is_valid_us_product(item):
                     product = self._create_product(item, query, i)
-                    if product:
+                    if product and product['link'] != '#':  # Solo agregar si tiene link válido
                         products.append(product)
             
-            print(f"✅ Found {len(products)} valid US products")
+            print(f"✅ Found {len(products)} valid US products with working links")
             return products
             
         except Exception as e:
@@ -102,10 +105,16 @@ class USProductFinder:
         if not item.get('title', '').strip():
             return False
         
+        # CRÍTICO: Verificar que tenga link válido
+        link = item.get('link', '').strip()
+        if not link or not self._is_valid_url(link):
+            print(f"❌ Producto rechazado por link inválido: {link}")
+            return False
+        
         # Verificar que no sea de otros países/monedas
         text = f"{item.get('title', '')} {item.get('price', '')} {item.get('source', '')}".lower()
         
-        # Lista de términos prohibidos (corregida sin errores de sintaxis)
+        # Lista de términos prohibidos
         banned_terms = [
             'peso', 'pesos', 'mxn', 'mexico', 'mexican',
             'euro', 'eur', 'canada', 'canadian', 'cad',
@@ -117,7 +126,6 @@ class USProductFinder:
                 return False
         
         # Verificar dominios prohibidos
-        link = item.get('link', '')
         banned_domains = ['amazon.com.mx', 'amazon.ca', 'amazon.co.uk', 'mercadolibre']
         for domain in banned_domains:
             if domain in link:
@@ -125,22 +133,81 @@ class USProductFinder:
         
         return True
 
+    def _is_valid_url(self, url):
+        """Verifica que la URL sea válida y accesible"""
+        try:
+            # Verificar formato básico de URL
+            if not url.startswith(('http://', 'https://')):
+                return False
+            
+            # Verificar que no sea demasiado corta
+            if len(url) < 10:
+                return False
+            
+            # Verificar que contenga dominio válido
+            if not re.search(r'https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', url):
+                return False
+            
+            return True
+        except:
+            return False
+
     def _create_product(self, item, query, index):
         try:
             title = html.unescape(item.get('title', ''))
+            link = item.get('link', '').strip()
             price = self._extract_price(item)
+            
+            # CRÍTICO: Procesar y limpiar el link
+            clean_link = self._process_link(link)
+            
+            # Debug: Mostrar link original vs procesado
+            if index < 3:  # Solo para los primeros 3 productos
+                print(f"🔗 Link original: {link[:80]}...")
+                print(f"🔗 Link procesado: {clean_link[:80]}...")
             
             return {
                 'title': title[:80],
                 'price_numeric': price,
                 'price_str': f"${price:,.2f} USD" if price > 0 else "Price not available",
                 'source': html.unescape(item.get('source', 'US Store'))[:40],
-                'link': item.get('link', '#'),
+                'link': clean_link,
                 'thumbnail': item.get('thumbnail', ''),
                 'search_query': query
             }
-        except:
+        except Exception as e:
+            print(f"❌ Error creating product: {e}")
             return None
+
+    def _process_link(self, link):
+        """Procesa y limpia el link para garantizar funcionalidad"""
+        try:
+            if not link:
+                return '#'
+            
+            # Limpiar caracteres extraños
+            link = link.strip()
+            
+            # Si no tiene protocolo, agregar https
+            if not link.startswith(('http://', 'https://')):
+                link = 'https://' + link
+            
+            # Decodificar URL si está encoded
+            try:
+                from urllib.parse import unquote
+                link = unquote(link)
+            except:
+                pass
+            
+            # Verificar longitud máxima razonable
+            if len(link) > 2000:
+                link = link[:2000]
+            
+            return link
+            
+        except Exception as e:
+            print(f"❌ Error processing link: {e}")
+            return '#'
 
     def _extract_price(self, item):
         try:
@@ -313,6 +380,9 @@ def results_page():
 
     products_html = ""
     for i, p in enumerate(products, 1):
+        # Agregar indicador visual de link funcional
+        link_status = "🔗 Working Link" if p['link'] != '#' else "⚠️ No Link"
+        
         products_html += f'''
 <div style="border:1px solid #ddd;border-radius:10px;padding:20px;margin:10px 0;background:white;display:flex;gap:15px;align-items:center">
 <img src="{p.get('thumbnail','https://via.placeholder.com/80')}" style="width:80px;height:80px;object-fit:contain" onerror="this.src='https://via.placeholder.com/80'">
@@ -320,7 +390,8 @@ def results_page():
 <h3 style="margin:0 0 8px 0;color:#333;font-size:16px">{html.escape(p['title'])}</h3>
 <p style="font-size:18px;color:#d32f2f;font-weight:bold;margin:5px 0">{p['price_str']}</p>
 <p style="color:#666;margin:5px 0;font-size:14px">🇺🇸 {html.escape(p['source'])}</p>
-<a href="{p['link']}" target="_blank" style="display:inline-block;background:#1a73e8;color:white;padding:6px 12px;text-decoration:none;border-radius:5px;font-size:14px">View Product</a>
+<p style="color:#27ae60;margin:5px 0;font-size:12px">{link_status}</p>
+<a href="{p['link']}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#e74c3c;color:white;padding:8px 16px;text-decoration:none;border-radius:5px;font-size:14px;font-weight:bold;margin-top:5px">🛒 BUY NOW</a>
 </div>
 <div style="text-align:center;color:#1976d2;font-weight:bold">#{i}</div>
 </div>'''
