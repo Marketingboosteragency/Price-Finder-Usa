@@ -1,4 +1,4 @@
-# HTML Templates actualizados con botón de cambio de API
+# HTML Templates
 INDEX_HTML = f"""
 <!DOCTYPE html>
 <html lang="es">
@@ -186,6 +186,16 @@ SEARCH_HTML = f"""
         .progress-bar {{ background: #e5e7eb; border-radius: 10px; margin: 20px 0; height: 8px; }}
         .progress-fill {{ background: #3b82f6; height: 100%; border-radius: 10px; transition: width 0.5s ease; width: 0%; }}
         .tips {{ background: #fef3c7; padding: 20px; border-radius: 12px; margin-top: 20px; border-left: 4px solid #f59e0b; }}
+        .api-key-button {{
+            position: fixed; bottom: 20px; right: 20px; background: #f59e0b; color: white;
+            border: none; padding: 12px 16px; border-radius: 50px; cursor: pointer;
+            font-weight: 600; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+            transition: all 0.3s ease; z-index: 100;
+        }}
+        .api-key-button:hover {{
+            background: #d97706; transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
+        }}
     </style>
 </head>
 <body>
@@ -340,7 +350,7 @@ SEARCH_HTML = f"""
 </html>
 """
 
-# Rutas Flask actualizadas
+# Rutas Flask
 @app.route('/')
 def index():
     return INDEX_HTML
@@ -590,6 +600,16 @@ def results_page():
             .btn-secondary {{ background: #6b7280; }}
             .btn-secondary:hover {{ background: #4b5563; }}
             .actions {{ display: flex; gap: 15px; justify-content: center; margin-bottom: 30px; flex-wrap: wrap; }}
+            .api-key-button {{
+                position: fixed; bottom: 20px; right: 20px; background: #f59e0b; color: white;
+                border: none; padding: 12px 16px; border-radius: 50px; cursor: pointer;
+                font-weight: 600; box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+                transition: all 0.3s ease; z-index: 100;
+            }}
+            .api-key-button:hover {{
+                background: #d97706; transform: translateY(-2px);
+                box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
+            }}
             @media (max-width: 768px) {{
                 .container {{ padding: 15px; }}
                 .header h1 {{ font-size: 2rem; }}
@@ -629,17 +649,17 @@ def results_page():
 
 @app.route('/api/health')
 def health_check():
-    return jsonify({{'status': 'OK', 'message': 'Price Finder USA está funcionando'}})
+    return jsonify({'status': 'OK', 'message': 'Price Finder USA está funcionando'})
 
 @app.route('/api/test')
 def test_endpoint():
     """Endpoint de prueba para verificar que la app funciona"""
-    return jsonify({{
+    return jsonify({
         'status': 'SUCCESS',
         'message': '🇺🇸 Price Finder USA con cambio de API key está funcionando!',
         'timestamp': datetime.now().isoformat(),
         'version': '2.1 - Con cambio de API Key'
-    }})
+    })
 
 @app.route('/api/key-status')
 def api_key_status():
@@ -1252,7 +1272,7 @@ class PriceFinder:
         
         return unique_products
 
-# Componente de cambio de API key que se puede incluir en cualquier página
+# Componente de cambio de API key
 API_KEY_MODAL = """
 <!-- Modal para cambiar API key -->
 <div id="apiKeyModal" class="modal hidden">
@@ -1436,7 +1456,7 @@ document.addEventListener('click', function(e) {
 </script>
 """
 
-# HTML Templates actualizados con botón de cambio de API
+# HTML Templates
 INDEX_HTML = f"""
 <!DOCTYPE html>
 <html lang="es">
@@ -1444,8 +1464,3 @@ INDEX_HTML = f"""
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🇺🇸 Price Finder USA</title>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #
