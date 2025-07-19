@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask import Flask, request, jsonify, session, redirect, url_for
 import requests
 import json
 from typing import List, Dict, Optional
@@ -264,10 +264,317 @@ class PriceFinder:
         
         return unique_products
 
+# HTML Templates embebidos
+INDEX_HTML = """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🇺🇸 Price Finder USA</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh; color: #333;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; color: white; }
+        .header h1 { font-size: 2.5rem; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        .setup-card { 
+            background: white; border-radius: 16px; padding: 40px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2); max-width: 600px; margin: 0 auto;
+        }
+        .input-group { margin-bottom: 20px; }
+        .input-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #374151; }
+        .input-group input { 
+            width: 100%; padding: 16px; border: 2px solid #e5e7eb; border-radius: 12px; 
+            font-size: 16px; transition: all 0.3s ease;
+        }
+        .input-group input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
+        .btn { 
+            background: #3b82f6; color: white; border: none; padding: 16px 24px; 
+            border-radius: 12px; cursor: pointer; font-size: 16px; font-weight: 600; 
+            transition: all 0.3s ease; text-decoration: none; display: inline-block;
+        }
+        .btn:hover { background: #2563eb; transform: translateY(-2px); box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3); }
+        .features { background: #f0f9ff; padding: 25px; border-radius: 12px; border-left: 4px solid #3b82f6; margin-top: 20px; }
+        .error { background: #fef2f2; border: 2px solid #fecaca; color: #991b1b; padding: 20px; border-radius: 12px; margin: 20px 0; }
+        .hidden { display: none !important; }
+        .loading { text-align: center; padding: 20px; }
+        .spinner { width: 30px; height: 30px; border: 3px solid #e5e7eb; border-left: 3px solid #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🇺🇸 Price Finder USA</h1>
+            <p>Encuentra los mejores precios solo en vendedores de EE.UU.</p>
+        </div>
+
+        <div class="setup-card" id="setupCard">
+            <h2>¡Bienvenido! 🚀</h2>
+            <p>Para comenzar necesitas una API key gratuita de SerpAPI.</p>
+            
+            <form id="setupForm">
+                <div class="input-group">
+                    <label for="apiKey">API Key de SerpAPI:</label>
+                    <input type="text" id="apiKey" name="api_key" placeholder="Pega aquí tu API key..." required>
+                </div>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                    <a href="https://serpapi.com/" target="_blank" style="color: #3b82f6;">
+                        📝 ¿No tienes API key? Obtén una gratis aquí →
+                    </a>
+                </div>
+                
+                <button type="submit" class="btn">✅ Configurar y Continuar</button>
+            </form>
+
+            <div class="features">
+                <h3>🛡️ Características principales:</h3>
+                <ul style="list-style: none; padding-left: 0;">
+                    <li>✅ Solo vendedores verificados de EE.UU.</li>
+                    <li>❌ Filtra automáticamente sitios chinos</li>
+                    <li>🔗 Links de compra directa verificados</li>
+                    <li>💰 Encuentra las mejores ofertas</li>
+                </ul>
+            </div>
+        </div>
+
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <p>Configurando API key...</p>
+        </div>
+
+        <div id="error" class="error hidden"></div>
+    </div>
+
+    <script>
+        document.getElementById('setupForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const apiKey = formData.get('api_key').trim();
+            
+            if (!apiKey) {
+                showError('Por favor ingresa tu API key');
+                return;
+            }
+            
+            showLoading();
+            
+            fetch('/setup', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = '/search';
+                } else {
+                    showError(data.error || 'Error al configurar API key');
+                }
+            })
+            .catch(error => {
+                showError('Error de conexión: ' + error.message);
+            });
+        });
+
+        function showLoading() {
+            document.getElementById('setupCard').style.display = 'none';
+            document.getElementById('loading').classList.remove('hidden');
+        }
+
+        function showError(message) {
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('setupCard').style.display = 'block';
+            
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.classList.remove('hidden');
+            
+            setTimeout(() => {
+                errorDiv.classList.add('hidden');
+            }, 5000);
+        }
+    </script>
+</body>
+</html>
+"""
+
+SEARCH_HTML = """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Búsqueda - Price Finder USA</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh; color: #333;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; color: white; }
+        .header h1 { font-size: 2.5rem; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        .search-card { 
+            background: white; border-radius: 16px; padding: 40px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2); max-width: 600px; margin: 0 auto;
+        }
+        .search-bar { display: flex; gap: 12px; margin-bottom: 20px; }
+        .search-bar input { 
+            flex: 1; padding: 16px; border: 2px solid #e5e7eb; border-radius: 12px; 
+            font-size: 16px; transition: all 0.3s ease;
+        }
+        .btn { 
+            background: #3b82f6; color: white; border: none; padding: 16px 24px; 
+            border-radius: 12px; cursor: pointer; font-size: 16px; font-weight: 600; 
+        }
+        .btn:hover { background: #2563eb; transform: translateY(-2px); }
+        .loading { text-align: center; padding: 40px; background: white; border-radius: 16px; margin: 20px 0; }
+        .spinner { width: 50px; height: 50px; border: 5px solid #e5e7eb; border-left: 5px solid #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 20px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .hidden { display: none !important; }
+        .error { background: #fef2f2; border: 2px solid #fecaca; color: #991b1b; padding: 20px; border-radius: 12px; margin: 20px 0; }
+        .progress-bar { background: #e5e7eb; border-radius: 10px; margin: 20px 0; height: 8px; }
+        .progress-fill { background: #3b82f6; height: 100%; border-radius: 10px; transition: width 0.5s ease; width: 0%; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 Buscar Productos</h1>
+            <p>Encuentra los mejores precios en tiendas de EE.UU.</p>
+        </div>
+
+        <div class="search-card" id="searchCard">
+            <form id="searchForm">
+                <div class="search-bar">
+                    <input type="text" id="searchQuery" placeholder="¿Qué producto buscas? Ej: iPhone 15, Samsung TV..." required>
+                    <button type="submit" class="btn">🚀 Buscar</button>
+                </div>
+            </form>
+
+            <p style="text-align: center; color: #6b7280;">
+                🏪 Buscaremos en: Amazon, Walmart y más tiendas de EE.UU.<br>
+                ⏱️ La búsqueda puede tomar 1-2 minutos.
+            </p>
+        </div>
+
+        <div id="searchLoading" class="loading hidden">
+            <div class="spinner"></div>
+            <h3>🔍 Buscando mejores precios...</h3>
+            <p id="loadingMessage">Iniciando búsqueda...</p>
+            
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <p id="progressText">0% completado</p>
+
+            <button type="button" class="btn" style="background: #6b7280; margin-top: 20px;" onclick="cancelSearch()">
+                ❌ Cancelar búsqueda
+            </button>
+        </div>
+
+        <div id="searchError" class="error hidden"></div>
+    </div>
+
+    <script>
+        let searchInProgress = false;
+
+        document.getElementById('searchForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (searchInProgress) return;
+
+            const query = document.getElementById('searchQuery').value.trim();
+            if (!query) return;
+
+            startSearch(query);
+        });
+
+        function startSearch(query) {
+            searchInProgress = true;
+            document.getElementById('searchCard').style.display = 'none';
+            document.getElementById('searchLoading').classList.remove('hidden');
+            
+            simulateProgress();
+
+            fetch('/api/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: query })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = '/results';
+                } else {
+                    showError(data.error || 'Error en la búsqueda');
+                }
+            })
+            .catch(error => {
+                showError('Error de conexión: ' + error.message);
+            });
+        }
+
+        function simulateProgress() {
+            const messages = [
+                'Buscando en Google Shopping...',
+                'Consultando Walmart...',
+                'Validando vendedores de EE.UU...',
+                'Organizando resultados...'
+            ];
+
+            let currentStep = 0;
+            let progress = 0;
+
+            const interval = setInterval(() => {
+                progress += Math.random() * 15 + 5;
+                if (progress > 95) progress = 95;
+
+                document.getElementById('progressFill').style.width = progress + '%';
+                document.getElementById('progressText').textContent = Math.round(progress) + '% completado';
+
+                if (currentStep < messages.length) {
+                    document.getElementById('loadingMessage').textContent = messages[currentStep];
+                    currentStep++;
+                }
+
+                if (progress >= 95) {
+                    clearInterval(interval);
+                }
+            }, 800);
+        }
+
+        function showError(message) {
+            searchInProgress = false;
+            document.getElementById('searchLoading').classList.add('hidden');
+            document.getElementById('searchCard').style.display = 'block';
+            
+            const errorDiv = document.getElementById('searchError');
+            errorDiv.textContent = message;
+            errorDiv.classList.remove('hidden');
+        }
+
+        function cancelSearch() {
+            searchInProgress = false;
+            document.getElementById('searchLoading').classList.add('hidden');
+            document.getElementById('searchCard').style.display = 'block';
+        }
+    </script>
+</body>
+</html>
+"""
+
 # Rutas Flask
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return INDEX_HTML
 
 @app.route('/setup', methods=['POST'])
 def setup_api():
@@ -282,7 +589,7 @@ def setup_api():
 def search_page():
     if 'api_key' not in session:
         return redirect(url_for('index'))
-    return render_template('search.html')
+    return SEARCH_HTML
 
 @app.route('/api/search', methods=['POST'])
 def api_search():
@@ -322,15 +629,115 @@ def results_page():
         return redirect(url_for('search_page'))
     
     search_data = session['last_search']
-    return render_template('results.html', 
-                         query=search_data['query'],
-                         products=search_data['products'],
-                         total=len(search_data['products']))
+    products = search_data['products']
+    
+    # Crear HTML de resultados dinámicamente
+    products_html = ""
+    if products:
+        for product in products:
+            title = product['title'][:80] + ("..." if len(product['title']) > 80 else "")
+            price = f"${product['price_numeric']:.2f}"
+            source = product['source']
+            link = product['link']
+            rating = product.get('rating', '')
+            reviews = product.get('reviews', '')
+            
+            products_html += f"""
+                <div class="product-card">
+                    <div class="verified-badge">🇺🇸 Verificado</div>
+                    <div class="product-title">{title}</div>
+                    <div class="product-price">{price}</div>
+                    <div class="product-source">{source}</div>
+                    <div style="color: #6b7280; margin-bottom: 15px;">
+                        {f'⭐ {rating}' if rating else ''} 
+                        {f'📝 {reviews} reseñas' if reviews and reviews != 'None' else ''}
+                        🚚 Envío a EE.UU.
+                    </div>
+                    <a href="{link}" target="_blank" class="btn">🛒 Ver en {source}</a>
+                    <p style="font-size: 12px; color: #059669; margin-top: 8px;">Link verificado ✅</p>
+                </div>
+            """
+    else:
+        products_html = """
+            <div style="background: white; padding: 40px; border-radius: 16px; text-align: center;">
+                <h3>😔 No se encontraron productos</h3>
+                <p style="margin: 15px 0; color: #6b7280;">No se encontraron productos válidos de vendedores de EE.UU.</p>
+                <a href="/search" class="btn">🔍 Intentar Nueva Búsqueda</a>
+            </div>
+        """
+    
+    results_html = f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Resultados - Price Finder USA</title>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ 
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh; color: #333;
+            }}
+            .container {{ max-width: 1200px; margin: 0 auto; padding: 20px; }}
+            .header {{ text-align: center; margin-bottom: 30px; color: white; }}
+            .header h1 {{ font-size: 2.5rem; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }}
+            .results-summary {{ 
+                background: #f0fdf4; border: 2px solid #bbf7d0; border-radius: 16px; 
+                padding: 25px; margin-bottom: 30px; color: #166534;
+            }}
+            .product-card {{ 
+                background: white; border: 2px solid #e5e7eb; border-radius: 16px; 
+                padding: 25px; margin-bottom: 20px; position: relative;
+                transition: all 0.3s ease;
+            }}
+            .product-card:hover {{ 
+                border-color: #3b82f6; transform: translateY(-2px); 
+                box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+            }}
+            .verified-badge {{ 
+                background: #059669; color: white; padding: 6px 12px; border-radius: 20px; 
+                font-size: 12px; position: absolute; top: 15px; right: 15px;
+            }}
+            .product-title {{ font-size: 18px; font-weight: 600; margin-bottom: 12px; color: #1f2937; }}
+            .product-price {{ font-size: 28px; font-weight: bold; color: #059669; margin-bottom: 12px; }}
+            .product-source {{ 
+                background: #3b82f6; color: white; padding: 6px 16px; border-radius: 20px; 
+                display: inline-block; font-size: 14px; margin-bottom: 15px;
+            }}
+            .btn {{ 
+                background: #3b82f6; color: white; border: none; padding: 12px 20px; 
+                border-radius: 8px; text-decoration: none; font-weight: 600;
+                display: inline-block; transition: all 0.3s ease;
+            }}
+            .btn:hover {{ background: #2563eb; transform: translateY(-2px); }}
+            .btn-secondary {{ background: #6b7280; }}
+            .btn-secondary:hover {{ background: #4b5563; }}
+            .actions {{ display: flex; gap: 15px; justify-content: center; margin-bottom: 30px; flex-wrap: wrap; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🎉 Resultados de Búsqueda</h1>
+                <p>{search_data['query']} - {len(products)} productos verificados de EE.UU.</p>
+            </div>
 
-@app.route('/api/health')
-def health_check():
-    return jsonify({'status': 'OK', 'message': 'Price Finder USA está funcionando'})
+            {f'''
+            <div class="results-summary">
+                <h3>✅ Búsqueda Completada</h3>
+                <p><strong>{len(products)} productos verificados</strong> de vendedores de EE.UU.</p>
+                {f"<p>💰 Rango de precios: ${products[0]['price_numeric']:.2f} - ${products[-1]['price_numeric']:.2f}</p>" if products else ""}
+            </div>
+            ''' if products else ''}
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+            <div class="actions">
+                <a href="/search" class="btn">🔍 Nueva Búsqueda</a>
+                <button onclick="window.print()" class="btn btn-secondary">📄 Imprimir Resultados</button>
+            </div>
+
+            {products_html}
+        </div>
+    </body>
+    </html>"""
