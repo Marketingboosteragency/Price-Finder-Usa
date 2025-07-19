@@ -1,13 +1,8 @@
 Flask==2.3.3
 requests==2.31.0
 gunicorn==21.2.0
-Werkzeug==2.3.7
-
-# Librerías adicionales para mejores resultados
-beautifulsoup4==4.12.2     # Para scraping directo de tiendas
-selenium==4.15.0           # Para sitios con JavaScript
-lxml==4.9.3               # Parser rápido para HTML
-fake-useragent==1.4.0     # User agents rotativos
-cloudscraper==1.2.71      # Bypass Cloudflare
-price-parser==0.3.4       # Extracción inteligente de precios
-python-dotenv==1.0.0      # Variables de entorno
+beautifulsoup4==4.12.2
+cloudscraper==1.2.71
+fake-useragent==1.4.0
+price-parser==0.3.4
+lxml==4.9.3
