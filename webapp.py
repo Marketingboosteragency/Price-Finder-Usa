@@ -8,36 +8,31 @@ from urllib.parse import urlparse, unquote, quote_plus
 import json
 import time
 
-# Importaciones corregidas (sin lxml)
+# Importaciones mejoradas
 try:
     from bs4 import BeautifulSoup
     import cloudscraper
     from fake_useragent import UserAgent
     from price_parser import Price
     HAS_ENHANCED = True
-    print("✅ Librerías mejoradas cargadas: BeautifulSoup (html.parser), CloudScraper, Price-Parser")
+    print("✅ Librerías mejoradas cargadas")
 except ImportError:
     HAS_ENHANCED = False
-    print("⚠️ Usando modo básico. Para mejores resultados instala: pip install beautifulsoup4 cloudscraper fake-useragent price-parser")
+    print("⚠️ Modo básico")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-class UltimatePriceFinder:
+class SmartPriceFinder:
     def __init__(self, api_key):
         self.api_key = api_key
         self.base_url = "https://serpapi.com/search"
-        
-        # APIs adicionales
         self.scraperapi_key = os.environ.get('SCRAPERAPI_KEY', '')
         self.rapidapi_key = os.environ.get('RAPIDAPI_KEY', '')
         
         if HAS_ENHANCED:
             self.scraper = cloudscraper.create_scraper()
             self.ua = UserAgent()
-        
-        print(f"🔑 ScraperAPI: {'✅' if self.scraperapi_key else '❌ (opcional)'}")
-        print(f"🔑 RapidAPI: {'✅' if self.rapidapi_key else '❌ (opcional)'}")
         
     def test_api_key(self):
         try:
@@ -51,126 +46,267 @@ class UltimatePriceFinder:
             return {'valid': False, 'message': 'Error de conexión'}
     
     def search_products(self, query):
-        """Búsqueda ULTIMATE con todas las fuentes posibles"""
+        """Búsqueda INTELIGENTE que encuentra productos específicos"""
         if not query:
             return []
         
+        print(f"🔍 BÚSQUEDA INTELIGENTE para: '{query}'")
+        
         all_products = []
+        original_query = query.strip()
         
-        print(f"🔍 ULTIMATE SEARCH para: {query}")
-        
-        # 1. SerpAPI Google Shopping (principal)
+        # 1. Búsqueda principal con términos exactos
         try:
-            print("📡 Buscando en Google Shopping...")
-            serpapi_products = self._search_serpapi_shopping(query)
-            all_products.extend(serpapi_products)
-            print(f"✅ Google Shopping: {len(serpapi_products)} productos")
+            print("📡 Búsqueda principal...")
+            main_products = self._search_with_exact_terms(original_query)
+            all_products.extend(main_products)
+            print(f"✅ Búsqueda principal: {len(main_products)} productos")
         except Exception as e:
-            print(f"❌ Error Google Shopping: {e}")
+            print(f"❌ Error búsqueda principal: {e}")
         
-        # 2. RapidAPI Shopping
-        if self.rapidapi_key and len(all_products) < 20:
+        # 2. Búsqueda expandida con variaciones
+        if len(all_products) < 10:
             try:
-                print("🛒 Buscando en RapidAPI Shopping...")
-                rapidapi_products = self._search_rapidapi_shopping(query)
-                all_products.extend(rapidapi_products)
-                print(f"✅ RapidAPI Shopping: {len(rapidapi_products)} productos")
+                print("🔄 Búsqueda expandida...")
+                expanded_products = self._search_with_variations(original_query)
+                all_products.extend(expanded_products)
+                print(f"✅ Búsqueda expandida: {len(expanded_products)} productos")
             except Exception as e:
-                print(f"❌ Error RapidAPI: {e}")
+                print(f"❌ Error búsqueda expandida: {e}")
         
-        # 3. ScraperAPI para sitios especializados
-        if self.scraperapi_key and len(all_products) < 15:
+        # 3. Búsqueda de ofertas específicas
+        if len(all_products) < 15:
             try:
-                print("🕷️ Scraping sitios especializados...")
-                scraped_specialized = self._scrape_specialized_stores(query)
-                all_products.extend(scraped_specialized)
-                print(f"✅ Sitios especializados: {len(scraped_specialized)} productos")
+                print("💰 Búsqueda de ofertas...")
+                deal_products = self._search_deals_specific(original_query)
+                all_products.extend(deal_products)
+                print(f"✅ Ofertas específicas: {len(deal_products)} productos")
             except Exception as e:
-                print(f"❌ Error scraping especializado: {e}")
-        
-        # 4. Scraping directo básico (sin lxml)
-        if HAS_ENHANCED and len(all_products) < 15:
-            try:
-                print("🕷️ Scraping directo básico...")
-                scraped_basic = self._scrape_basic_stores(query)
-                all_products.extend(scraped_basic)
-                print(f"✅ Scraping básico: {len(scraped_basic)} productos")
-            except Exception as e:
-                print(f"❌ Error scraping básico: {e}")
-        
-        # 5. Bing Shopping
-        try:
-            print("📡 Buscando en Bing Shopping...")
-            bing_products = self._search_bing_shopping(query)
-            all_products.extend(bing_products)
-            print(f"✅ Bing Shopping: {len(bing_products)} productos")
-        except Exception as e:
-            print(f"❌ Error Bing Shopping: {e}")
+                print(f"❌ Error búsqueda ofertas: {e}")
         
         print(f"📊 Total productos encontrados: {len(all_products)}")
         
         if all_products:
-            real_products = [p for p in all_products if p and self._is_real_product_link(p.get('link', ''))]
-            print(f"✅ Productos con links reales: {len(real_products)}")
+            # Filtrar por relevancia con la búsqueda original
+            relevant_products = self._filter_by_relevance(all_products, original_query)
+            print(f"🎯 Productos relevantes: {len(relevant_products)}")
             
-            if real_products:
-                unique_products = self._remove_duplicates(real_products)
+            if relevant_products:
+                unique_products = self._remove_duplicates(relevant_products)
                 sorted_products = sorted(unique_products, key=lambda x: x.get('price_numeric', 999))
-                print(f"🎯 Productos únicos ordenados: {len(sorted_products)}")
-                return sorted_products[:30]
+                final_products = sorted_products[:20]
+                print(f"✅ Productos finales: {len(final_products)}")
+                return final_products
         
-        print("❌ No se encontraron productos reales")
+        print("❌ No se encontraron productos específicos")
         return []
     
-    def _search_serpapi_shopping(self, query):
-        """Búsqueda principal en Google Shopping"""
+    def _search_with_exact_terms(self, query):
+        """Búsqueda con términos exactos"""
         products = []
         
-        search_queries = [
-            query,
-            f"{query} cheap",
-            f"{query} sale discount",
-            f"{query} liquidator clearance"
+        # Consultas específicas para encontrar el producto exacto
+        exact_queries = [
+            f'"{query}"',  # Búsqueda exacta entre comillas
+            query,         # Búsqueda normal
+            f"{query} buy", # Con intención de compra
         ]
         
-        for search_query in search_queries[:2]:
+        for search_query in exact_queries:
             try:
-                params = {
-                    'engine': 'google_shopping',
-                    'q': search_query,
-                    'api_key': self.api_key,
-                    'num': 50,
-                    'location': 'United States',
-                    'gl': 'us',
-                    'hl': 'en',
-                    'sort_by': 'price:asc',
-                    'safe': 'active'
-                }
+                # Google Shopping
+                shopping_products = self._search_google_shopping(search_query)
+                products.extend(shopping_products)
                 
-                response = requests.get(self.base_url, params=params, timeout=15)
-                data = response.json() if response else None
+                # Bing Shopping  
+                bing_products = self._search_bing_shopping(search_query)
+                products.extend(bing_products)
                 
-                if data and 'shopping_results' in data:
-                    for item in data['shopping_results']:
-                        product = self._process_shopping_item(item)
-                        if product:
-                            products.append(product)
-                
-                if len(products) >= 20:
+                if len(products) >= 15:
                     break
                     
             except Exception as e:
-                print(f"Error en consulta '{search_query}': {e}")
+                print(f"Error en consulta exacta '{search_query}': {e}")
                 continue
         
         return products
+    
+    def _search_with_variations(self, query):
+        """Búsqueda con variaciones inteligentes del término"""
+        products = []
+        
+        # Generar variaciones inteligentes
+        variations = self._generate_smart_variations(query)
+        
+        for variation in variations[:3]:  # Limitar variaciones
+            try:
+                shopping_products = self._search_google_shopping(variation)
+                products.extend(shopping_products)
+                
+                if len(products) >= 10:
+                    break
+                    
+            except Exception as e:
+                print(f"Error en variación '{variation}': {e}")
+                continue
+        
+        return products
+    
+    def _search_deals_specific(self, query):
+        """Búsqueda específica de ofertas para el producto"""
+        products = []
+        
+        deal_queries = [
+            f"{query} sale",
+            f"{query} discount", 
+            f"{query} cheap",
+            f"{query} best price"
+        ]
+        
+        for deal_query in deal_queries[:2]:
+            try:
+                shopping_products = self._search_google_shopping(deal_query)
+                products.extend(shopping_products)
+                
+                if len(products) >= 8:
+                    break
+                    
+            except Exception as e:
+                print(f"Error en oferta '{deal_query}': {e}")
+                continue
+        
+        return products
+    
+    def _generate_smart_variations(self, query):
+        """Genera variaciones inteligentes del término de búsqueda"""
+        variations = []
+        query_lower = query.lower()
+        
+        # Variaciones por tipo de producto
+        if 'iphone' in query_lower:
+            variations.extend([
+                query.replace('iphone', 'iPhone'),
+                f"Apple {query}",
+                f"{query} unlocked",
+                f"{query} smartphone"
+            ])
+        elif 'samsung' in query_lower:
+            variations.extend([
+                f"{query} galaxy",
+                f"{query} phone",
+                f"{query} smartphone"
+            ])
+        elif 'tape' in query_lower or 'cinta' in query_lower:
+            variations.extend([
+                f"{query} adhesive",
+                f"{query} roll",
+                f"{query} pack"
+            ])
+        elif 'laptop' in query_lower:
+            variations.extend([
+                f"{query} computer",
+                f"{query} notebook",
+                f"{query} pc"
+            ])
+        else:
+            # Variaciones genéricas
+            variations.extend([
+                f"{query} new",
+                f"{query} original",
+                f"{query} brand"
+            ])
+        
+        return variations[:5]  # Limitar variaciones
+    
+    def _filter_by_relevance(self, products, original_query):
+        """Filtra productos por relevancia con la búsqueda original"""
+        relevant_products = []
+        query_words = set(original_query.lower().split())
+        
+        for product in products:
+            if not product:
+                continue
+            
+            title = str(product.get('title', '')).lower()
+            
+            # Calcular relevancia
+            relevance_score = self._calculate_relevance(title, query_words)
+            
+            # Solo incluir productos con relevancia alta
+            if relevance_score >= 0.3:  # Al menos 30% de relevancia
+                product['relevance_score'] = relevance_score
+                relevant_products.append(product)
+        
+        # Ordenar por relevancia y precio
+        relevant_products.sort(key=lambda x: (-x.get('relevance_score', 0), x.get('price_numeric', 999)))
+        
+        return relevant_products
+    
+    def _calculate_relevance(self, title, query_words):
+        """Calcula un score de relevancia entre 0 y 1"""
+        title_words = set(title.split())
+        
+        # Palabras que coinciden exactamente
+        exact_matches = query_words.intersection(title_words)
+        
+        # Palabras que coinciden parcialmente
+        partial_matches = 0
+        for query_word in query_words:
+            for title_word in title_words:
+                if query_word in title_word or title_word in query_word:
+                    partial_matches += 0.5
+                    break
+        
+        # Calcular score
+        total_query_words = len(query_words)
+        if total_query_words == 0:
+            return 0
+        
+        exact_score = len(exact_matches) / total_query_words
+        partial_score = min(partial_matches / total_query_words, 0.5)
+        
+        return min(exact_score + partial_score, 1.0)
+    
+    def _search_google_shopping(self, query):
+        """Búsqueda optimizada en Google Shopping"""
+        try:
+            params = {
+                'engine': 'google_shopping',
+                'q': query,
+                'api_key': self.api_key,
+                'num': 50,
+                'location': 'United States',
+                'gl': 'us',
+                'hl': 'en',
+                'sort_by': 'price:asc',
+                'safe': 'active'
+            }
+            
+            response = requests.get(self.base_url, params=params, timeout=15)
+            data = response.json() if response else None
+            
+            if not data or 'error' in data:
+                return []
+            
+            products = []
+            if 'shopping_results' in data and data['shopping_results']:
+                for item in data['shopping_results']:
+                    product = self._process_shopping_item(item)
+                    if product:
+                        products.append(product)
+            
+            return products
+            
+        except Exception as e:
+            print(f"Error Google Shopping: {e}")
+            return []
     
     def _search_bing_shopping(self, query):
         """Búsqueda en Bing Shopping"""
         try:
             params = {
                 'engine': 'bing_shopping',
-                'q': f"{query} discount clearance",
+                'q': query,
                 'api_key': self.api_key,
                 'count': 30,
                 'location': 'United States'
@@ -190,279 +326,13 @@ class UltimatePriceFinder:
         except:
             return []
     
-    def _search_rapidapi_shopping(self, query):
-        """RapidAPI Shopping"""
-        if not self.rapidapi_key:
-            return []
-        
-        products = []
-        
-        # API Real-Time Shopping
-        try:
-            url = "https://real-time-product-search.p.rapidapi.com/search"
-            headers = {
-                "X-RapidAPI-Key": self.rapidapi_key,
-                "X-RapidAPI-Host": "real-time-product-search.p.rapidapi.com"
-            }
-            params = {
-                "q": query,
-                "country": "us",
-                "language": "en",
-                "limit": "20",
-                "sort_by": "PRICE_LOW_TO_HIGH"
-            }
-            
-            response = requests.get(url, headers=headers, params=params, timeout=10)
-            data = response.json() if response else None
-            
-            if data and 'data' in data:
-                for item in data['data'][:15]:
-                    product = self._process_rapidapi_item(item)
-                    if product:
-                        products.append(product)
-            
-        except Exception as e:
-            print(f"Error RapidAPI: {e}")
-        
-        return products
-    
-    def _scrape_specialized_stores(self, query):
-        """Scraping de tiendas especializadas usando ScraperAPI"""
-        if not self.scraperapi_key:
-            return []
-        
-        products = []
-        
-        specialized_stores = [
-            {
-                'name': 'LumberLiquidators',
-                'search_url': f'https://lumberliquidators.com/search?q={quote_plus(query)}',
-                'base_url': 'https://lumberliquidators.com'
-            },
-            {
-                'name': 'Overstock',
-                'search_url': f'https://overstock.com/search?keywords={quote_plus(query)}',
-                'base_url': 'https://overstock.com'
-            }
-        ]
-        
-        for store in specialized_stores[:1]:  # Limitar para no agotar API
-            try:
-                store_products = self._scrape_with_scraperapi(store, query)
-                products.extend(store_products)
-                time.sleep(1)
-            except Exception as e:
-                print(f"Error scraping {store['name']}: {e}")
-                continue
-        
-        return products
-    
-    def _scrape_with_scraperapi(self, store, query):
-        """Scraping usando ScraperAPI"""
-        products = []
-        
-        try:
-            scraperapi_url = "http://api.scraperapi.com"
-            params = {
-                'api_key': self.scraperapi_key,
-                'url': store['search_url'],
-                'render': 'true',
-                'country_code': 'us'
-            }
-            
-            response = requests.get(scraperapi_url, params=params, timeout=20)
-            
-            if response.status_code == 200:
-                # Usar html.parser en lugar de lxml
-                soup = BeautifulSoup(response.content, 'html.parser')
-                
-                product_selectors = [
-                    '.product-item', '.product-card', '.product', '.item',
-                    '[data-product]', '[data-item]', '.search-result'
-                ]
-                
-                items = []
-                for selector in product_selectors:
-                    items = soup.select(selector)
-                    if items:
-                        break
-                
-                for item in items[:8]:
-                    try:
-                        product = self._extract_from_scraperapi_element(item, store)
-                        if product and self._is_real_product_link(product['link']):
-                            products.append(product)
-                    except:
-                        continue
-            
-        except Exception as e:
-            print(f"Error ScraperAPI para {store['name']}: {e}")
-        
-        return products
-    
-    def _scrape_basic_stores(self, query):
-        """Scraping básico con CloudScraper (sin lxml)"""
-        if not HAS_ENHANCED:
-            return []
-        
-        products = []
-        
-        headers = {
-            'User-Agent': self.ua.random,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
-        }
-        
-        basic_stores = [
-            {
-                'name': 'eBay',
-                'search_url': f'https://www.ebay.com/sch/i.html?_nkw={quote_plus(query)}&_sop=15',
-                'item_selector': '.s-item',
-                'title_selector': '.s-item__title',
-                'price_selector': '.s-item__price',
-                'link_selector': '.s-item__link'
-            }
-        ]
-        
-        for store in basic_stores:
-            try:
-                response = self.scraper.get(store['search_url'], headers=headers, timeout=10)
-                # Usar html.parser en lugar de lxml
-                soup = BeautifulSoup(response.content, 'html.parser')
-                
-                items = soup.select(store['item_selector'])[:8]
-                
-                for item in items:
-                    try:
-                        product = self._extract_basic_store_item(item, store)
-                        if product and self._is_real_product_link(product['link']):
-                            products.append(product)
-                    except:
-                        continue
-                        
-            except Exception as e:
-                print(f"Error scraping {store['name']}: {e}")
-        
-        return products
-    
-    def _extract_from_scraperapi_element(self, element, store):
-        """Extrae datos de elemento HTML de ScraperAPI"""
-        try:
-            title_selectors = [
-                'h3', 'h4', '.title', '.product-title', '.name', 
-                '[data-title]', 'a[title]'
-            ]
-            title = ""
-            for selector in title_selectors:
-                title_elem = element.select_one(selector)
-                if title_elem:
-                    title = title_elem.get_text(strip=True) or title_elem.get('title', '')
-                    if title and len(title) > 5:
-                        break
-            
-            if not title or len(title) < 5:
-                return None
-            
-            price_text = element.get_text()
-            if HAS_ENHANCED:
-                try:
-                    parsed_price = Price.fromstring(price_text)
-                    if parsed_price.amount:
-                        price_numeric = float(parsed_price.amount)
-                    else:
-                        price_numeric = self._extract_price_basic(price_text)
-                except:
-                    price_numeric = self._extract_price_basic(price_text)
-            else:
-                price_numeric = self._extract_price_basic(price_text)
-            
-            if price_numeric <= 0 or price_numeric > 5000:
-                return None
-            
-            link_elem = element.select_one('a[href]')
-            if not link_elem:
-                return None
-            
-            link = link_elem.get('href', '')
-            if link.startswith('/'):
-                link = store['base_url'] + link
-            elif link.startswith('//'):
-                link = 'https:' + link
-            
-            if not self._is_real_product_link(link):
-                return None
-            
-            return {
-                'title': self._clean_text(title),
-                'price': f"${price_numeric:.2f}",
-                'price_numeric': price_numeric,
-                'source': store['name'],
-                'link': link,
-                'rating': '',
-                'reviews': '',
-                'image': '',
-                'is_real': True,
-                'source_type': 'scraperapi'
-            }
-            
-        except Exception as e:
-            print(f"Error extrayendo datos ScraperAPI: {e}")
-            return None
-    
-    def _extract_basic_store_item(self, element, store):
-        """Extrae datos de tienda básica"""
-        try:
-            title_elem = element.select_one(store['title_selector'])
-            if not title_elem:
-                return None
-            title = title_elem.get_text(strip=True)
-            
-            if not title or len(title) < 5:
-                return None
-            
-            price_elem = element.select_one(store['price_selector'])
-            if not price_elem:
-                return None
-            
-            price_text = price_elem.get_text(strip=True)
-            price_numeric = self._extract_price_enhanced(price_text) if HAS_ENHANCED else self._extract_price_basic(price_text)
-            
-            if price_numeric <= 0:
-                return None
-            
-            link_elem = element.select_one(store['link_selector'])
-            if not link_elem:
-                return None
-            
-            link = link_elem.get('href', '')
-            if link.startswith('/'):
-                if store['name'].lower() == 'ebay':
-                    link = 'https://www.ebay.com' + link
-            
-            return {
-                'title': self._clean_text(title),
-                'price': f"${price_numeric:.2f}",
-                'price_numeric': price_numeric,
-                'source': store['name'],
-                'link': link,
-                'rating': '',
-                'reviews': '',
-                'image': '',
-                'is_real': True,
-                'source_type': 'basic_scraping'
-            }
-            
-        except:
-            return None
-    
     def _process_shopping_item(self, item):
-        """Procesa items de shopping APIs"""
+        """Procesa items de shopping con validación mejorada"""
         if not item:
             return None
         
         try:
+            # Extraer precio
             price_str = item.get('price', '')
             if not price_str:
                 for field in ['extracted_price', 'sale_price', 'current_price']:
@@ -470,18 +340,21 @@ class UltimatePriceFinder:
                         price_str = item[field]
                         break
             
-            price_num = self._extract_price_enhanced(price_str) if HAS_ENHANCED else self._extract_price_basic(price_str)
+            price_num = self._extract_price(price_str)
             if price_num <= 0:
                 return None
             
+            # Extraer link real
             product_link = self._extract_real_product_link(item)
             if not product_link:
                 return None
             
+            # Validar título
             title = item.get('title', '')
             if not title or len(title.strip()) < 5:
                 return None
             
+            # Fuente
             source = item.get('source', item.get('merchant', ''))
             if not source:
                 try:
@@ -507,50 +380,6 @@ class UltimatePriceFinder:
             print(f"Error procesando shopping item: {e}")
             return None
     
-    def _process_rapidapi_item(self, item):
-        """Procesa items de RapidAPI"""
-        try:
-            title = item.get('title') or item.get('product_title') or item.get('name', '')
-            if not title or len(title) < 5:
-                return None
-            
-            price_fields = ['price', 'product_price', 'current_price', 'sale_price']
-            price_str = ""
-            for field in price_fields:
-                if item.get(field):
-                    price_str = str(item[field])
-                    break
-            
-            if not price_str:
-                return None
-            
-            price_numeric = self._extract_price_enhanced(price_str) if HAS_ENHANCED else self._extract_price_basic(price_str)
-            if price_numeric <= 0:
-                return None
-            
-            link = item.get('product_url') or item.get('url') or item.get('link', '')
-            if not self._is_real_product_link(link):
-                return None
-            
-            source = item.get('source') or item.get('store') or item.get('merchant', 'Online Store')
-            
-            return {
-                'title': self._clean_text(title),
-                'price': f"${price_numeric:.2f}",
-                'price_numeric': price_numeric,
-                'source': self._clean_text(source),
-                'link': link,
-                'rating': str(item.get('rating', '')),
-                'reviews': str(item.get('reviews', '')),
-                'image': str(item.get('image', '')),
-                'is_real': True,
-                'source_type': 'rapidapi'
-            }
-            
-        except Exception as e:
-            print(f"Error procesando RapidAPI item: {e}")
-            return None
-    
     def _extract_real_product_link(self, item):
         """Extrae links reales de productos"""
         if not item:
@@ -560,6 +389,7 @@ class UltimatePriceFinder:
             if field in item and item[field]:
                 raw_link = str(item[field])
                 
+                # Limpiar redirects de Google
                 if 'url=' in raw_link:
                     try:
                         decoded_link = unquote(raw_link.split('url=')[1].split('&')[0])
@@ -579,13 +409,14 @@ class UltimatePriceFinder:
         return ""
     
     def _is_real_product_link(self, link):
-        """Validación de links reales"""
+        """Validación mejorada de links reales"""
         if not link:
             return False
         
         try:
             link_lower = str(link).lower()
             
+            # Rechazar búsquedas obvias
             search_indicators = [
                 '/search?', '/s?k=', '/sch/', '?q=', 'search=', 
                 '/search/', 'query=', '_nkw=', 'searchterm=',
@@ -595,30 +426,29 @@ class UltimatePriceFinder:
             if any(indicator in link_lower for indicator in search_indicators):
                 return False
             
+            # Validar patrones de productos
             product_patterns = [
                 r'/dp/[A-Z0-9]+',           # Amazon
                 r'/itm/\d+',                # eBay
                 r'/ip/\d+',                 # Walmart
-                r'/p/\d+',                  # Target/eBay
+                r'/p/\d+',                  # Target/otros
                 r'/product/',               # Generic
-                r'/products/',              # Shopify (lumberliquidators)
-                r'\?variant=\d+',           # Shopify variants
+                r'/products/',              # Shopify
                 r'/listing/\d+',            # Etsy
-                r'/item/\d+',               # Generic
             ]
             
             has_product_pattern = any(re.search(pattern, link_lower) for pattern in product_patterns)
             
-            valid_domains = [
+            # Dominios confiables
+            trusted_domains = [
                 'amazon.com', 'ebay.com', 'walmart.com', 'target.com',
-                'lumberliquidators.com', 'liquidation.com', 'overstock.com',
-                'woot.com', 'surplus.com', 'clearance', 'liquidator',
-                'homedepot.com', 'lowes.com', 'bestbuy.com'
+                'bestbuy.com', 'homedepot.com', 'lowes.com', 'costco.com',
+                'newegg.com', 'apple.com', 'samsung.com', 'dell.com'
             ]
             
-            has_valid_domain = any(domain in link_lower for domain in valid_domains)
+            has_trusted_domain = any(domain in link_lower for domain in trusted_domains)
             
-            if has_product_pattern or has_valid_domain:
+            if has_product_pattern or has_trusted_domain:
                 parsed = urlparse(link)
                 return bool(parsed.scheme and parsed.netloc)
             
@@ -627,22 +457,22 @@ class UltimatePriceFinder:
         except:
             return False
     
-    def _extract_price_enhanced(self, price_str):
-        """Extracción mejorada con price-parser"""
-        try:
-            parsed = Price.fromstring(str(price_str))
-            if parsed.amount:
-                return float(parsed.amount)
-        except:
-            pass
-        
-        return self._extract_price_basic(price_str)
-    
-    def _extract_price_basic(self, price_str):
-        """Extracción básica de precios"""
+    def _extract_price(self, price_str):
+        """Extracción robusta de precios"""
         if not price_str:
             return 0.0
+        
         try:
+            # Usar price-parser si está disponible
+            if HAS_ENHANCED:
+                try:
+                    parsed = Price.fromstring(str(price_str))
+                    if parsed.amount:
+                        return float(parsed.amount)
+                except:
+                    pass
+            
+            # Método básico
             price_text = str(price_str).lower()
             patterns = [
                 r'\$(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)',
@@ -661,16 +491,18 @@ class UltimatePriceFinder:
                         continue
         except:
             pass
+        
         return 0.0
     
     def _clean_text(self, text):
+        """Limpia texto de manera segura"""
         if not text:
             return "Sin información"
         cleaned = html.escape(str(text), quote=True)
         return cleaned[:150] + "..." if len(cleaned) > 150 else cleaned
     
     def _remove_duplicates(self, products):
-        """Remover duplicados manteniendo el más barato"""
+        """Remover duplicados manteniendo el mejor precio"""
         seen_titles = {}
         unique_products = []
         
@@ -678,19 +510,25 @@ class UltimatePriceFinder:
             if not product:
                 continue
             
-            title_key = str(product['title'])[:50].lower().strip()
-            if title_key not in seen_titles:
-                seen_titles[title_key] = product
+            # Crear clave más específica para evitar falsos duplicados
+            title_key = str(product['title'])[:60].lower().strip()
+            source_key = str(product['source'])[:20].lower().strip()
+            combined_key = f"{title_key}_{source_key}"
+            
+            if combined_key not in seen_titles:
+                seen_titles[combined_key] = product
                 unique_products.append(product)
             else:
-                if product['price_numeric'] < seen_titles[title_key]['price_numeric']:
-                    unique_products = [p for p in unique_products if p['title'][:50].lower().strip() != title_key]
+                # Si encontramos uno más barato, reemplazar
+                if product['price_numeric'] < seen_titles[combined_key]['price_numeric']:
+                    unique_products = [p for p in unique_products 
+                                     if f"{str(p['title'])[:60].lower().strip()}_{str(p['source'])[:20].lower().strip()}" != combined_key]
                     unique_products.append(product)
-                    seen_titles[title_key] = product
+                    seen_titles[combined_key] = product
         
         return unique_products
 
-# Resto del código Flask (igual que antes pero usando la clase corregida)
+# Flask app routes
 def render_page(title, content):
     return f'''<!DOCTYPE html>
 <html lang="es">
@@ -727,8 +565,6 @@ def render_page(title, content):
         .spinner {{ border: 4px solid #f3f3f3; border-top: 4px solid #1a73e8; border-radius: 50%; 
                    width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 0 auto 20px; }}
         @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
-        .api-status {{ background: #fff3cd; border: 1px solid #ffc107; padding: 15px; 
-                      border-radius: 8px; margin-top: 15px; }}
     </style>
 </head>
 <body>{content}</body>
@@ -736,35 +572,26 @@ def render_page(title, content):
 
 @app.route('/')
 def index():
-    finder = UltimatePriceFinder('test')
-    
-    content = f'''
+    content = '''
     <div class="container">
-        <h1>🎯 Price Finder USA - FIXED</h1>
-        <p class="subtitle">✅ Corregido para Python 3.13 (sin lxml)</p>
-        
-        <div class="api-status">
-            <strong>🔌 Sistema corregido:</strong><br>
-            ✅ SerpAPI (Google + Bing Shopping)<br>
-            ✅ BeautifulSoup con html.parser (sin lxml)<br>
-            {'✅' if finder.scraperapi_key else '❌'} ScraperAPI (opcional)<br>
-            {'✅' if finder.rapidapi_key else '❌'} RapidAPI Shopping (opcional)
-        </div>
+        <h1>🎯 Price Finder INTELIGENTE</h1>
+        <p class="subtitle">✅ Encuentra productos ESPECÍFICOS y REALES</p>
         
         <form id="setupForm">
             <label for="apiKey">API Key de SerpAPI:</label>
             <input type="text" id="apiKey" placeholder="Pega aquí tu API key..." required>
-            <button type="submit">🎯 Activar Sistema CORREGIDO</button>
+            <button type="submit">🎯 Activar Búsqueda INTELIGENTE</button>
         </form>
         
         <div class="features">
-            <h3>✅ Sistema corregido para Render:</h3>
+            <h3>🎯 Búsqueda INTELIGENTE arreglada:</h3>
             <ul>
-                <li>Removido lxml incompatible con Python 3.13</li>
-                <li>BeautifulSoup usa html.parser built-in</li>
-                <li>Todas las funciones mantienen compatibilidad</li>
-                <li>Scraping LumberLiquidators funcional</li>
-                <li>APIs opcionales siguen disponibles</li>
+                <li>Encuentra productos específicos de tu búsqueda</li>
+                <li>Filtra por relevancia - NO resultados genéricos</li>
+                <li>Búsquedas exactas + variaciones inteligentes</li>
+                <li>Precios reales de productos reales</li>
+                <li>Links directos verificados</li>
+                <li>Score de relevancia para cada producto</li>
             </ul>
         </div>
         
@@ -775,29 +602,29 @@ def index():
         </div>
     </div>
     <script>
-        document.getElementById('setupForm').addEventListener('submit', function(e) {{
+        document.getElementById('setupForm').addEventListener('submit', function(e) {
             e.preventDefault();
             const apiKey = document.getElementById('apiKey').value.trim();
             if (!apiKey) return showError('Por favor ingresa tu API key');
             
             showLoading();
-            fetch('/setup', {{
+            fetch('/setup', {
                 method: 'POST',
-                headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
                 body: 'api_key=' + encodeURIComponent(apiKey)
-            }})
+            })
             .then(response => response.json())
-            .then(data => {{
+            .then(data => {
                 hideLoading();
                 data.success ? window.location.href = '/search' : showError(data.error || 'Error al configurar API key');
-            }})
-            .catch(() => {{ hideLoading(); showError('Error de conexión'); }});
-        }});
-        function showLoading() {{ document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }}
-        function hideLoading() {{ document.getElementById('loading').style.display = 'none'; }}
-        function showError(msg) {{ hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }}
+            })
+            .catch(() => { hideLoading(); showError('Error de conexión'); });
+        });
+        function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
+        function hideLoading() { document.getElementById('loading').style.display = 'none'; }
+        function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
     </script>'''
-    return render_page('🎯 Price Finder USA - FIXED', content)
+    return render_page('🎯 Price Finder INTELIGENTE', content)
 
 @app.route('/setup', methods=['POST'])
 def setup_api():
@@ -806,7 +633,7 @@ def setup_api():
         if not api_key:
             return jsonify({'error': 'API key requerida'}), 400
         
-        price_finder = UltimatePriceFinder(api_key)
+        price_finder = SmartPriceFinder(api_key)
         test_result = price_finder.test_api_key()
         
         if not test_result.get('valid'):
@@ -822,74 +649,64 @@ def search_page():
     if 'api_key' not in session:
         return redirect(url_for('index'))
     
-    finder = UltimatePriceFinder('test')
-    
-    content = f'''
+    content = '''
     <div class="container">
-        <h1>🔍 Búsqueda CORREGIDA</h1>
-        <p class="subtitle">✅ Compatible con Python 3.13</p>
-        
-        <div class="api-status">
-            <strong>🚀 Fuentes activas:</strong><br>
-            Google Shopping ✅ | Bing Shopping ✅ | 
-            ScraperAPI {'✅' if finder.scraperapi_key else '❌'} | 
-            RapidAPI {'✅' if finder.rapidapi_key else '❌'} | 
-            Scraping directo ✅ (html.parser)
-        </div>
+        <h1>🔍 Búsqueda ESPECÍFICA</h1>
+        <p class="subtitle">🎯 Encuentra exactamente lo que buscas</p>
         
         <form id="searchForm">
             <div class="search-bar">
-                <input type="text" id="searchQuery" placeholder="Ej: blue painters tape, cinta adhesiva azul..." required>
-                <button type="submit">🎯 Buscar CORREGIDO</button>
+                <input type="text" id="searchQuery" placeholder="Ej: iPhone 15, Samsung Galaxy S24, cinta adhesiva azul..." required>
+                <button type="submit">🎯 Buscar ESPECÍFICO</button>
             </div>
         </form>
         
         <div class="tips">
-            <h4>✅ Sistema corregido incluye:</h4>
+            <h4>🎯 Búsqueda ESPECÍFICA arreglada:</h4>
             <ul style="margin: 10px 0 0 20px;">
-                <li><strong>Sin errores lxml:</strong> BeautifulSoup con parser nativo</li>
-                <li><strong>Liquidadores:</strong> LumberLiquidators, Overstock</li>
-                <li><strong>APIs múltiples:</strong> Google, Bing, RapidAPI</li>
-                <li><strong>Scraping funcional:</strong> CloudScraper + html.parser</li>
-                <li><strong>Links reales:</strong> Verificación estricta</li>
+                <li><strong>Productos específicos:</strong> Encuentra exactamente lo que buscas</li>
+                <li><strong>Filtro de relevancia:</strong> Solo productos relacionados con tu búsqueda</li>
+                <li><strong>Múltiples variaciones:</strong> Búsquedas exactas + sinónimos inteligentes</li>
+                <li><strong>Precios reales:</strong> De productos que realmente existen</li>
+                <li><strong>Sin resultados genéricos:</strong> No más "Shop on eBay" irrelevantes</li>
             </ul>
         </div>
         
         <div id="loading" class="loading">
             <div class="spinner"></div>
-            <h3>🎯 Búsqueda en progreso...</h3>
-            <p>Sistema corregido analizando fuentes...</p>
+            <h3>🎯 Buscando productos específicos...</h3>
+            <p>Analizando relevancia y filtrando resultados...</p>
         </div>
         
         <div id="error" class="error"></div>
     </div>
     <script>
         let searching = false;
-        document.getElementById('searchForm').addEventListener('submit', function(e) {{
+        document.getElementById('searchForm').addEventListener('submit', function(e) {
             e.preventDefault();
             if (searching) return;
             const query = document.getElementById('searchQuery').value.trim();
-            if (!query) return showError('Por favor ingresa un producto para buscar');
+            if (!query) return showError('Por favor ingresa un producto específico para buscar');
             
             searching = true;
             showLoading();
-            fetch('/api/search', {{
+            fetch('/api/search', {
                 method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{query: query}})
-            }})
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({query: query})
+            })
             .then(response => response.json())
-            .then(data => {{
+            .then(data => {
                 searching = false;
                 data.success ? window.location.href = '/results' : (hideLoading(), showError(data.error || 'Error en la búsqueda'));
-            }})
-            .catch(() => {{ searching = false; hideLoading(); showError('Error de conexión'); }});
-        }});
-        function showLoading() {{ document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }}
-        function hideLoading() {{ document.getElementById('loading').style.display = 'none'; }}
-        function showError(msg) {{ hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }}
+            })
+            .catch(() => { searching = false; hideLoading(); showError('Error de conexión'); });
+        });
+        function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
+        function hideLoading() { document.getElementById('loading').style.display = 'none'; }
+        function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
     </script>'''
-    return render_page('🔍 Búsqueda CORREGIDA', content)
+    return render_page('🔍 Búsqueda ESPECÍFICA', content)
 
 @app.route('/api/search', methods=['POST'])
 def api_search():
@@ -902,28 +719,28 @@ def api_search():
         if not query:
             return jsonify({'error': 'Consulta requerida'}), 400
         
-        price_finder = UltimatePriceFinder(session['api_key'])
+        price_finder = SmartPriceFinder(session['api_key'])
         products = price_finder.search_products(query)
         
         if not products:
             return jsonify({
                 'success': False, 
-                'error': 'No se encontraron productos reales. Sistema corregido analizó todas las fuentes.',
-                'suggestion': 'Intenta con términos más específicos o marcas conocidas'
+                'error': f'No se encontraron productos específicos para "{query}". Intenta con términos más específicos como marca + modelo.',
+                'suggestion': 'Ejemplos: "iPhone 15 Pro", "Samsung Galaxy S24", "Sony WH-1000XM4"'
             })
         
         session['last_search'] = {
             'query': query,
             'products': products,
             'timestamp': datetime.now().isoformat(),
-            'fixed_mode': True
+            'smart_mode': True
         }
         
         return jsonify({
             'success': True, 
             'products': products, 
             'total': len(products),
-            'fixed_mode': True
+            'smart_mode': True
         })
         
     except Exception as e:
@@ -943,83 +760,102 @@ def results_page():
         if not products:
             no_results_content = f'''
             <div style="max-width: 900px; margin: 0 auto;">
-                <h1 style="color: white; text-align: center; margin-bottom: 10px;">❌ Sin resultados para: "{query}"</h1>
+                <h1 style="color: white; text-align: center; margin-bottom: 10px;">🎯 Sin productos específicos para: "{query}"</h1>
                 <div style="background: white; padding: 40px; border-radius: 15px; text-align: center;">
-                    <h3 style="color: #666; margin-bottom: 20px;">Sistema corregido analizó todas las fuentes</h3>
+                    <h3 style="color: #666; margin-bottom: 20px;">Búsqueda INTELIGENTE activada</h3>
                     <p style="color: #888; margin-bottom: 30px;">
-                        El sistema funciona correctamente pero no encontró productos válidos.<br>
-                        Intenta con términos más específicos o marcas conocidas.
+                        El sistema buscó productos específicos relacionados con "{query}" pero no encontró resultados relevantes.<br>
+                        Intenta con términos más específicos incluyendo marca y modelo.
                     </p>
                     <a href="/search" style="background: #1a73e8; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: 600;">
-                        🔍 Intentar Nueva Búsqueda
+                        🔍 Buscar con Términos Específicos
                     </a>
                 </div>
             </div>'''
-            return render_page('Sin Resultados', no_results_content)
+            return render_page('Sin Productos Específicos', no_results_content)
         
-        # Generar HTML de productos
+        # Generar HTML de productos específicos
         products_html = ""
         
         for i, product in enumerate(products):
             if not product:
                 continue
             
-            badge = ""
-            if i == 0:
-                badge = '<div style="position: absolute; top: 10px; right: 10px; background: #4caf50; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">🥇 MÁS BARATO</div>'
-            elif i == 1:
-                badge = '<div style="position: absolute; top: 10px; right: 10px; background: #ff9800; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">🥈 2º LUGAR</div>'
+            # Badge de relevancia
+            relevance = product.get('relevance_score', 0)
+            relevance_percent = int(relevance * 100)
             
-            source_type = product.get('source_type', 'api')
-            source_badge = f'<div style="position: absolute; top: 10px; left: 10px; background: #2196f3; color: white; padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: bold;">✅ {source_type.upper()}</div>'
+            relevance_badge = ""
+            if relevance >= 0.8:
+                relevance_badge = f'<div style="position: absolute; top: 10px; right: 10px; background: #4caf50; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">🎯 {relevance_percent}% RELEVANTE</div>'
+            elif relevance >= 0.5:
+                relevance_badge = f'<div style="position: absolute; top: 10px; right: 10px; background: #ff9800; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">📍 {relevance_percent}% RELEVANTE</div>'
+            else:
+                relevance_badge = f'<div style="position: absolute; top: 10px; right: 10px; background: #9e9e9e; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">🔍 {relevance_percent}% RELEVANTE</div>'
+            
+            # Badge de precio
+            price_badge = ""
+            if i == 0:
+                price_badge = '<div style="position: absolute; top: 40px; right: 10px; background: #e91e63; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">💰 MÁS BARATO</div>'
+            elif i == 1:
+                price_badge = '<div style="position: absolute; top: 40px; right: 10px; background: #9c27b0; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">🥈 2º LUGAR</div>'
             
             title = html.escape(str(product.get('title', 'Producto')))
             price = html.escape(str(product.get('price', '$0.00')))
             source = html.escape(str(product.get('source', 'Tienda')))
             link = product.get('link', '#')
+            rating = html.escape(str(product.get('rating', '')))
+            reviews = html.escape(str(product.get('reviews', '')))
+            
+            rating_html = f"⭐ {rating}" if rating else ""
+            reviews_html = f"📝 {reviews} reseñas" if reviews else ""
             
             products_html += f'''
-                <div style="border: 1px solid #ddd; border-radius: 10px; padding: 20px; margin-bottom: 20px; background: white; position: relative; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-                    {badge}
-                    {source_badge}
-                    <h3 style="color: #1a73e8; margin-bottom: 12px; margin-top: 25px;">{title}</h3>
+                <div style="border: 2px solid #1a73e8; border-radius: 10px; padding: 20px; margin-bottom: 20px; background: white; position: relative; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+                    {relevance_badge}
+                    {price_badge}
+                    <h3 style="color: #1a73e8; margin-bottom: 12px; margin-top: 35px; line-height: 1.4;">{title}</h3>
                     <p style="font-size: 32px; color: #2e7d32; font-weight: bold; margin: 12px 0;">{price}</p>
-                    <p style="color: #666; margin-bottom: 10px;">🏪 {source}</p>
+                    <p style="color: #666; margin-bottom: 10px; font-weight: 500;">🏪 {source}</p>
                     <div style="color: #888; font-size: 14px; margin-bottom: 15px;">
-                        ✅ Link directo verificado • 🚀 Sistema corregido
+                        {rating_html} {reviews_html} {" • " if rating_html and reviews_html else ""} 
+                        ✅ Producto específico verificado
                     </div>
-                    <a href="{link}" target="_blank" rel="noopener noreferrer" style="background: #4caf50; color: white; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; display: inline-block;">
-                        🛒 IR AL PRODUCTO en {source}
+                    <a href="{link}" target="_blank" rel="noopener noreferrer" style="background: #4caf50; color: white; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; display: inline-block; transition: all 0.3s;">
+                        🛒 COMPRAR PRODUCTO ESPECÍFICO en {source}
                     </a>
                 </div>'''
         
-        # Estadísticas
+        # Estadísticas mejoradas
         prices = [p.get('price_numeric', 0) for p in products if p and p.get('price_numeric', 0) > 0]
+        avg_relevance = sum(p.get('relevance_score', 0) for p in products) / len(products) if products else 0
+        
         stats = ""
         if prices:
             min_price, max_price, avg_price = min(prices), max(prices), sum(prices) / len(prices)
             stats = f'''
                 <div style="background: linear-gradient(135deg, #e8f5e8, #c8e6c9); border: 2px solid #4caf50; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
-                    <h3 style="color: #2e7d32; margin-bottom: 10px;">✅ Sistema CORREGIDO funcionando</h3>
-                    <p><strong>🎯 {len(products)} productos encontrados</strong> sin errores lxml</p>
+                    <h3 style="color: #2e7d32; margin-bottom: 10px;">🎯 Productos ESPECÍFICOS encontrados</h3>
+                    <p><strong>✅ {len(products)} productos específicos para "{query}"</strong></p>
+                    <p><strong>🎯 Relevancia promedio:</strong> {int(avg_relevance * 100)}% (productos específicos)</p>
                     <p><strong>💰 Precio más bajo:</strong> ${min_price:.2f}</p>
                     <p><strong>📊 Precio promedio:</strong> ${avg_price:.2f}</p>
-                    <p><strong>💸 Diferencia máxima:</strong> ${max_price - min_price:.2f}</p>
-                    <p><strong>🚀 Sistema:</strong> ✅ CORREGIDO para Python 3.13</p>
+                    <p><strong>💸 Ahorro máximo:</strong> ${max_price - min_price:.2f}</p>
+                    <p><strong>🚀 Sistema:</strong> ✅ BÚSQUEDA INTELIGENTE</p>
                 </div>'''
         
         content = f'''
         <div style="max-width: 900px; margin: 0 auto;">
-            <h1 style="color: white; text-align: center; margin-bottom: 10px;">✅ Resultados CORREGIDOS: "{query}"</h1>
-            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 30px;">🚀 Sistema funcionando sin errores lxml</p>
+            <h1 style="color: white; text-align: center; margin-bottom: 10px;">🎯 Productos ESPECÍFICOS: "{query}"</h1>
+            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 30px;">✅ Filtrados por relevancia - Solo productos específicos</p>
             <div style="text-align: center; margin-bottom: 25px;">
-                <a href="/search" style="background: white; color: #1a73e8; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600;">🔍 Nueva Búsqueda</a>
+                <a href="/search" style="background: white; color: #1a73e8; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600;">🔍 Nueva Búsqueda ESPECÍFICA</a>
             </div>
             {stats}
             {products_html}
         </div>'''
         
-        return render_page('✅ Resultados CORREGIDOS', content)
+        return render_page('🎯 Productos ESPECÍFICOS', content)
     except Exception as e:
         print(f"Error en results_page: {e}")
         return redirect(url_for('search_page'))
@@ -1028,12 +864,13 @@ def results_page():
 def test_endpoint():
     return jsonify({
         'status': 'SUCCESS',
-        'message': '✅ Price Finder USA - SISTEMA CORREGIDO',
-        'version': '12.0 - Compatible con Python 3.13 (sin lxml)',
-        'fixed_issues': {
-            'lxml_removed': True,
-            'html_parser_only': True,
-            'python_313_compatible': True
+        'message': '🎯 Price Finder INTELIGENTE - Resultados Específicos',
+        'version': '13.0 - Búsqueda específica con filtro de relevancia',
+        'features': {
+            'smart_search': True,
+            'relevance_filtering': True,
+            'specific_products': True,
+            'intelligent_variations': True
         }
     })
 
@@ -1041,18 +878,18 @@ def test_endpoint():
 def health_check():
     return jsonify({
         'status': 'OK', 
-        'message': 'Sistema CORREGIDO funcionando',
-        'timestamp': datetime.now().isoformat(),
-        'python_version_compatible': True
+        'message': 'Sistema INTELIGENTE funcionando',
+        'timestamp': datetime.now().isoformat()
     })
 
 if __name__ == '__main__':
-    print("✅ Iniciando Price Finder USA - SISTEMA CORREGIDO")
-    print("🚀 Cambios aplicados:")
-    print("   ✅ Removido lxml incompatible con Python 3.13")
-    print("   ✅ BeautifulSoup usa html.parser nativo")
-    print("   ✅ Todas las funciones mantienen compatibilidad")
-    print("   ✅ Sistema listo para Render.com")
+    print("🎯 Iniciando Price Finder INTELIGENTE")
+    print("✅ Características del sistema:")
+    print("   🎯 Búsqueda específica con filtro de relevancia")
+    print("   ✅ Encuentra productos exactos de tu búsqueda")
+    print("   🔍 Variaciones inteligentes del término")
+    print("   💰 Precios reales de productos reales")
+    print("   🚫 NO más resultados genéricos irrelevantes")
     
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
