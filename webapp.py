@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from flask import Flask, request, jsonify, session, redirect, url_for
 import requests, os, re, html, time, random
 from datetime import datetime
@@ -13,553 +15,344 @@ except ImportError:
     HAS_ENHANCED = False
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key')
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-for-intelligent-search')
+
+# --- INICIO DEL CÓDIGO CORREGIDO ---
 
 class IntelligentProductFinder:
     def __init__(self, api_key):
         self.api_key = api_key
         self.base_url = "https://serpapi.com/search"
         self.session = requests.Session()
+        # AÑADIDO: User-Agent para simular un navegador real y evitar bloqueos
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
         if HAS_ENHANCED:
             self.scraper = cloudscraper.create_scraper()
-    
+
     def test_api_key(self):
         try:
-            response = requests.get(self.base_url, params={'engine': 'google', 'q': 'test', 'api_key': self.api_key, 'num': 1}, timeout=10)
+            response = self.session.get(self.base_url, params={'engine': 'google', 'q': 'test', 'api_key': self.api_key, 'num': 1}, timeout=10)
             data = response.json() if response else None
             return {'valid': True, 'message': 'API key válida'} if data and 'error' not in data else {'valid': False, 'message': 'API key inválida'}
         except:
             return {'valid': False, 'message': 'Error de conexión'}
-    
+
     def search_products(self, query):
         if not query: return []
         
         print(f"🧠 BÚSQUEDA INTELIGENTE para: '{query}'")
         
-        # Paso 1: Analizar especificaciones del query
         specs = self._extract_specifications(query)
         print(f"📋 Especificaciones detectadas: {specs}")
         
-        # Paso 2: Generar queries inteligentes
         smart_queries = self._generate_smart_queries(query, specs)
         print(f"🔍 Queries generados: {smart_queries}")
         
         all_products = []
         
-        # Paso 3: Búsqueda con múltiples estrategias
         for search_query in smart_queries:
             try:
                 print(f"🔎 Buscando: '{search_query}'")
                 products = self._search_with_validation(search_query, specs)
                 all_products.extend(products)
-                if len(all_products) >= 20: break
+                if len(all_products) >= 30: # Aumentado para tener más base para filtrar
+                    break 
                 time.sleep(0.5)
             except Exception as e:
                 print(f"❌ Error en búsqueda '{search_query}': {e}")
                 continue
         
-        print(f"📊 Total productos encontrados: {len(all_products)}")
+        print(f"📊 Total productos brutos encontrados: {len(all_products)}")
         
-        if all_products:
-            # Paso 4: Filtrar por especificaciones exactas
-            filtered_products = self._filter_by_specifications(all_products, specs, query)
+        # MODIFICADO: Eliminar duplicados de manera más eficiente
+        unique_products = list({p['link']: p for p in all_products}.values())
+        print(f"📦 Productos únicos encontrados: {len(unique_products)}")
+        
+        if unique_products:
+            filtered_products = self._filter_by_specifications(unique_products, specs, query)
             print(f"🎯 Productos que cumplen especificaciones: {len(filtered_products)}")
             
             if filtered_products:
-                # Paso 5: Validar enlaces reales
                 verified_products = self._verify_real_links(filtered_products)
                 print(f"✅ Productos con enlaces verificados: {len(verified_products)}")
                 
                 if verified_products:
-                    # Paso 6: Ordenar por relevancia inteligente
                     scored_products = self._score_intelligent_relevance(verified_products, specs, query)
-                    final_products = sorted(scored_products, key=lambda x: (-x.get('intelligence_score', 0), x.get('price_numeric', 999)))
+                    # MODIFICADO: Orden inteligente por score (desc), precio (asc) y relevancia del título
+                    final_products = sorted(scored_products, key=lambda x: (-x.get('intelligence_score', 0), x.get('price_numeric', 9999), -x.get('title_relevance', 0)))
+                    print(f"🏆 Productos finales ordenados: {len(final_products)}")
                     return final_products[:25]
         
-        print("🆘 No se encontraron productos que cumplan especificaciones exactas")
+        print("🆘 No se encontraron productos que cumplan las especificaciones deseadas.")
         return []
-    
+
     def _extract_specifications(self, query):
-        """Extrae especificaciones técnicas del query"""
-        specs = {
-            'size': None,
-            'color': None,
-            'brand': None,
-            'model': None,
-            'material': None,
-            'dimensions': None,
-            'capacity': None
-        }
-        
+        specs = {'size': None, 'color': None, 'brand': None, 'model': None, 'capacity': None}
         query_lower = query.lower()
         
-        # Extraer tamaños/dimensiones
-        size_patterns = [
-            r'(\d+(?:\.\d+)?)\s*(?:pulgada|inch|in|")',
-            r'(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)',
-            r'(\d+(?:\.\d+)?)\s*cm',
-            r'(\d+(?:\.\d+)?)\s*mm',
-            r'(\d+)\s*gb',
-            r'(\d+)\s*tb'
-        ]
-        
+        # Tamaños/Dimensiones (más flexible)
+        size_patterns = [r'(\d+(?:\.\d+)?)\s*(?:pulgadas|pulgada|inch|in|")', r'(\d+(?:\.\d+)?)\s*cm', r'(\d+(?:\.\d+)?)\s*mm']
         for pattern in size_patterns:
-            matches = re.findall(pattern, query_lower)
-            if matches:
-                if 'pulgada' in pattern or 'inch' in pattern:
-                    specs['size'] = f"{matches[0]} pulgadas" if isinstance(matches[0], str) else f"{matches[0][0]} pulgadas"
-                elif 'x' in pattern:
-                    specs['dimensions'] = f"{matches[0][0]}x{matches[0][1]}"
-                elif 'gb' in pattern or 'tb' in pattern:
-                    specs['capacity'] = matches[0] + ('GB' if 'gb' in pattern else 'TB')
+            match = re.search(pattern, query_lower)
+            if match:
+                specs['size'] = match.group(0)
+                break
         
-        # Extraer colores
-        colors = ['azul', 'blue', 'rojo', 'red', 'verde', 'green', 'negro', 'black', 'blanco', 'white', 
-                 'amarillo', 'yellow', 'rosa', 'pink', 'gris', 'gray', 'morado', 'purple', 'naranja', 'orange']
+        # Capacidad
+        capacity_match = re.search(r'(\d+)\s*(gb|tb)', query_lower)
+        if capacity_match:
+            specs['capacity'] = capacity_match.group(0).upper()
+            
+        colors = ['azul', 'rojo', 'verde', 'negro', 'blanco', 'plata', 'gris', 'rosa', 'morado', 'naranja']
         for color in colors:
-            if color in query_lower:
+            if f' {color}' in query_lower or query_lower.startswith(color):
                 specs['color'] = color
                 break
         
-        # Extraer marcas conocidas
-        brands = ['apple', 'samsung', 'sony', 'lg', 'huawei', '3m', 'scotch', 'duck', 'gorilla', 'hp', 'dell', 'lenovo']
+        brands = ['apple', 'samsung', 'sony', 'lg', 'hp', 'dell', 'lenovo', '3m', 'scotch', 'gorilla', 'duck']
         for brand in brands:
             if brand in query_lower:
                 specs['brand'] = brand
                 break
-        
-        # Extraer modelos específicos
-        model_patterns = [
-            r'iphone\s*(\d+)',
-            r'galaxy\s*([a-z0-9]+)',
-            r'macbook\s*([a-z0-9\s]+)',
-            r'ipad\s*([a-z0-9\s]*)'
-        ]
-        
-        for pattern in model_patterns:
-            matches = re.findall(pattern, query_lower)
-            if matches:
-                specs['model'] = matches[0].strip()
-                break
-        
+                
         return {k: v for k, v in specs.items() if v is not None}
-    
+
     def _generate_smart_queries(self, original_query, specs):
-        """Genera queries inteligentes basados en especificaciones"""
         queries = [original_query]
-        
-        # Query con especificaciones exactas
-        if specs:
-            enhanced_query = original_query
-            for spec_type, spec_value in specs.items():
-                if spec_type == 'size' and spec_value:
-                    enhanced_query += f" {spec_value}"
-                elif spec_type == 'color' and spec_value:
-                    enhanced_query += f" {spec_value}"
-            
-            if enhanced_query != original_query:
-                queries.append(enhanced_query)
-        
-        # Queries específicos por categoría
-        query_lower = original_query.lower()
-        
-        if 'cinta' in query_lower or 'tape' in query_lower:
+        base_query = original_query
+        for spec_val in specs.values():
+            base_query = base_query.replace(spec_val, '').strip()
+
+        if 'cinta' in base_query or 'tape' in base_query:
             if specs.get('size'):
-                queries.append(f"tape {specs['size']}")
                 queries.append(f"cinta adhesiva {specs['size']}")
-            if specs.get('color'):
-                queries.append(f"{specs['color']} tape")
-                queries.append(f"cinta {specs['color']}")
+            if specs.get('brand'):
+                 queries.append(f"cinta {specs['brand']}")
         
-        elif 'iphone' in query_lower:
-            if specs.get('model'):
-                queries.append(f"Apple iPhone {specs['model']}")
-                queries.append(f"iPhone {specs['model']} unlocked")
-        
-        elif 'samsung' in query_lower:
-            if specs.get('model'):
-                queries.append(f"Samsung Galaxy {specs['model']}")
-        
-        # Limitar a 4 queries más relevantes
         return list(dict.fromkeys(queries))[:4]
-    
+
     def _search_with_validation(self, query, specs):
-        """Búsqueda con validación en tiempo real"""
         products = []
-        
         try:
             params = {
                 'engine': 'google_shopping',
                 'q': query,
                 'api_key': self.api_key,
-                'num': 30,
+                'num': 40, # Pedir más resultados para tener más opciones
+                
+                # --- ¡IMPORTANTE! AJUSTA ESTOS VALORES A TU MERCADO ---
+                # Ejemplo para México: 'location': 'Mexico', 'gl': 'mx', 'hl': 'es'
+                # Ejemplo para España: 'location': 'Spain', 'gl': 'es', 'hl': 'es'
                 'location': 'United States',
                 'gl': 'us',
                 'hl': 'en',
-                'sort_by': 'price:asc'
             }
             
-            response = requests.get(self.base_url, params=params, timeout=15)
+            response = self.session.get(self.base_url, params=params, timeout=20)
             if response.status_code != 200:
+                print(f"API Error: Status {response.status_code}")
                 return products
             
             data = response.json()
-            if not data or 'shopping_results' not in data:
+            if 'shopping_results' not in data:
+                print("No se encontraron 'shopping_results' en la respuesta de la API.")
                 return products
             
-            for item in data['shopping_results']:
+            for item in data.get('shopping_results', []):
                 product = self._process_item_with_intelligence(item, specs, query)
                 if product:
                     products.append(product)
         
         except Exception as e:
-            print(f"Error en búsqueda: {e}")
+            print(f"Error en _search_with_validation: {e}")
         
         return products
-    
+
     def _process_item_with_intelligence(self, item, specs, original_query):
-        """Procesamiento inteligente de items"""
-        if not item:
-            return None
+        if not item or not item.get('title'): return None
         
         try:
-            # 1. Validar título
-            title = item.get('title', '').strip()
-            if not title or len(title) < 10:
-                return None
-            
-            # 2. Extraer precio real
+            title = item['title'].strip()
             price_num = self._extract_real_price(item)
-            if price_num <= 0:
-                return None
+            if price_num <= 0.1: return None
             
-            # 3. Extraer enlace REAL (NUNCA generar artificiales)
             real_link = self._extract_genuine_link(item)
             if not real_link:
-                print(f"❌ No hay enlace real para: {title[:50]}")
                 return None
             
-            # 4. Validar fuente
             source = self._extract_verified_source(item, real_link)
-            if not source:
-                return None
-            
-            # 5. Pre-filtrar por especificaciones básicas
-            if not self._matches_basic_specs(title, specs):
-                return None
+            if not source: return None
             
             return {
-                'title': self._clean_text(title)[:300],
+                'title': self._clean_text(title),
                 'price': f"${price_num:.2f}",
                 'price_numeric': float(price_num),
-                'source': self._clean_text(source)[:50],
+                'source': self._clean_text(source),
                 'link': real_link,
-                'rating': str(item.get('rating', '')),
-                'reviews': str(item.get('reviews', '')),
-                'image': str(item.get('thumbnail', '')),
-                'raw_data': item,  # Guardar datos originales para verificación
-                'is_genuine': True,
-                'verified_link': False,  # Se verificará después
-                'spec_match': False     # Se calculará después
+                'rating': item.get('rating'),
+                'reviews': item.get('reviews'),
+                'image': item.get('thumbnail'),
+                'spec_match': False,
+                'verified_link': False,
+                'title_relevance': 0 # inicializar
             }
-            
         except Exception as e:
             print(f"Error procesando item: {e}")
             return None
-    
+
     def _extract_genuine_link(self, item):
-        """Extrae SOLO enlaces genuinos de la API (NUNCA genera artificiales)"""
-        
-        # Campos donde puede estar el enlace real
-        link_fields = ['product_link', 'link', 'url', 'merchant_link']
-        
-        for field in link_fields:
-            if field in item and item[field]:
-                raw_link = str(item[field]).strip()
-                
-                if not raw_link or raw_link == 'None':
-                    continue
-                
-                # Decodificar si está encoded
-                decoded_link = self._safely_decode_url(raw_link)
-                
-                # Validar que sea un enlace real (no de búsqueda)
-                if self._is_genuine_product_link(decoded_link):
-                    return decoded_link
-        
-        # Si no hay enlace real, devolver None (NO generar artificial)
-        return None
-    
-    def _safely_decode_url(self, raw_link):
-        """Decodifica URLs de forma segura"""
-        try:
-            # Si tiene parámetros encoded
-            if 'url=' in raw_link and 'http' in raw_link:
-                parts = raw_link.split('url=')
-                if len(parts) > 1:
-                    encoded_url = parts[1].split('&')[0]
-                    return unquote(encoded_url)
-            
-            # Si está percent-encoded
-            if '%' in raw_link:
-                return unquote(raw_link)
-            
-            return raw_link.strip()
-        except:
-            return raw_link
-    
-    def _is_genuine_product_link(self, link):
-        """Verifica si es un enlace genuino de producto"""
+        link = item.get('link', item.get('product_link'))
         if not link:
+            return None
+        
+        if self._is_genuine_product_link(link):
+            return unquote(link)
+        
+        return None
+
+    def _is_genuine_product_link(self, link):
+        """
+        Verificación de enlaces flexible. En lugar de una lista blanca de tiendas,
+        se usa una lista negra de patrones que indican que NO es un enlace de producto.
+        """
+        if not link or not isinstance(link, str):
             return False
         
         try:
-            link_lower = str(link).lower()
-            
-            # Rechazar enlaces de búsqueda
+            parsed = urlparse(link)
+            if not all([parsed.scheme, parsed.netloc]):
+                return False
+
+            link_lower = link.lower()
+            # Lista negra de patrones que aparecen en URLs de búsqueda y no de productos
             search_indicators = [
-                '/search', '/s?k=', '/sch/', '?q=', 'query=', 'search=',
-                'google.com/search', 'bing.com/search', '/browse', '/category'
+                'google.com/search', 'google.com/shopping/product', '/search?', 
+                '?q=', '&q=', 'query=', 'search_query=', '/sch/', '/s?', '/browse/', '/category/'
             ]
             
             if any(indicator in link_lower for indicator in search_indicators):
                 return False
-            
-            # Aceptar solo patrones de productos reales
-            product_patterns = [
-                r'amazon\.com/.+/dp/[A-Z0-9]+',
-                r'ebay\.com/.+/itm/\d+',
-                r'walmart\.com/.+/ip/\d+',
-                r'target\.com/.+/p/[\w-]+',
-                r'bestbuy\.com/.+/\d+\.p',
-                r'homedepot\.com/.+/p/.+/\d+',
-                r'lowes\.com/.+/pd/.+/\d+',
-                r'newegg\.com/.+/p/[\w-]+',
-                r'\.com/.+/products?/[\w-]+',
-                r'\.com/.+/item/[\w-]+',
-            ]
-            
-            # Debe coincidir con al menos un patrón
-            for pattern in product_patterns:
-                if re.search(pattern, link_lower):
-                    parsed = urlparse(link)
-                    return bool(parsed.scheme and parsed.netloc and len(parsed.path) > 5)
-            
-            return False
-            
+
+            return True
         except:
             return False
-    
+
     def _extract_real_price(self, item):
-        """Extrae precio real de la API"""
-        price_fields = ['price', 'extracted_price', 'sale_price', 'current_price']
-        
-        for field in price_fields:
-            if field in item and item[field]:
-                price_str = str(item[field]).strip()
-                price_num = self._parse_price_carefully(price_str)
-                if price_num > 0:
-                    return price_num
-        
-        return 0.0
-    
-    def _parse_price_carefully(self, price_str):
-        """Parsing cuidadoso de precios"""
-        if not price_str:
-            return 0.0
+        price_str = item.get('extracted_price') or item.get('price')
+        if not isinstance(price_str, str): return 0.0
         
         try:
-            # Usar price-parser si está disponible
-            if HAS_ENHANCED:
-                try:
-                    parsed = Price.fromstring(str(price_str))
-                    if parsed.amount and 0.1 <= float(parsed.amount) <= 5000:
-                        return float(parsed.amount)
-                except:
-                    pass
-            
-            # Limpieza manual
-            clean_price = re.sub(r'[^\d\.]', '', str(price_str))
-            if clean_price:
-                price_val = float(clean_price)
-                if 0.1 <= price_val <= 5000:
-                    return price_val
-        except:
-            pass
-        
-        return 0.0
-    
+            clean_price = re.sub(r'[^\d.]', '', price_str)
+            if clean_price and clean_price != '.':
+                return float(clean_price)
+            return 0.0
+        except (ValueError, TypeError):
+            return 0.0
+
     def _extract_verified_source(self, item, link):
-        """Extrae fuente verificada"""
-        source = item.get('source', item.get('merchant', ''))
+        source = item.get('source', '')
+        if source and isinstance(source, str): return source.strip()
         
-        if not source and link:
-            try:
-                domain = urlparse(link).netloc.replace('www.', '')
-                domain_map = {
-                    'amazon.com': 'Amazon', 'ebay.com': 'eBay', 'walmart.com': 'Walmart',
-                    'target.com': 'Target', 'bestbuy.com': 'Best Buy', 'homedepot.com': 'Home Depot'
-                }
-                source = domain_map.get(domain, domain.replace('.com', '').title())
-            except:
-                source = 'Store'
-        
-        return source if source else None
-    
-    def _matches_basic_specs(self, title, specs):
-        """Verifica coincidencia básica con especificaciones"""
-        if not specs:
-            return True
-        
-        title_lower = title.lower()
-        
-        # Verificar color si se especificó
-        if specs.get('color'):
-            color = specs['color'].lower()
-            if color not in title_lower:
-                return False
-        
-        # Verificar marca si se especificó
-        if specs.get('brand'):
-            brand = specs['brand'].lower()
-            if brand not in title_lower:
-                return False
-        
-        return True
-    
+        try:
+            domain = urlparse(link).netloc
+            if domain.startswith('www.'):
+                domain = domain[4:]
+            return domain.split('.')[0].title()
+        except:
+            return "Tienda"
+
     def _filter_by_specifications(self, products, specs, original_query):
-        """Filtrado estricto por especificaciones"""
-        if not specs:
-            return products
+        if not specs: return products
         
         filtered = []
-        
         for product in products:
-            title = product.get('title', '').lower()
+            title_lower = product['title'].lower()
+            matches = 0
+            total_specs = len(specs)
             
-            # Verificar tamaño/dimensiones exactas
-            if specs.get('size'):
-                spec_size = specs['size'].lower()
-                if not self._size_matches(title, spec_size):
-                    print(f"❌ Tamaño no coincide: {product['title'][:50]} (necesita: {spec_size})")
-                    continue
+            for spec_key, spec_value in specs.items():
+                spec_val_lower = str(spec_value).lower()
+                # Usar "word boundaries" (\b) para buscar palabras completas
+                if re.search(r'\b' + re.escape(spec_val_lower) + r'\b', title_lower):
+                    matches += 1
+                elif spec_key == 'size' and self._size_matches(title_lower, spec_val_lower):
+                    matches += 1
             
-            # Verificar color exacto
-            if specs.get('color'):
-                spec_color = specs['color'].lower()
-                if spec_color not in title:
-                    print(f"❌ Color no coincide: {product['title'][:50]} (necesita: {spec_color})")
-                    continue
-            
-            # Verificar modelo exacto
-            if specs.get('model'):
-                spec_model = specs['model'].lower()
-                if spec_model not in title:
-                    print(f"❌ Modelo no coincide: {product['title'][:50]} (necesita: {spec_model})")
-                    continue
-            
-            product['spec_match'] = True
-            filtered.append(product)
-            print(f"✅ Cumple especificaciones: {product['title'][:50]}")
+            # Aceptar si la mayoría de las especificaciones coinciden
+            if total_specs > 0 and (matches / total_specs) >= 0.99: # Ser estricto: deben coincidir todas
+                product['spec_match'] = True
+                filtered.append(product)
         
         return filtered
-    
+
     def _size_matches(self, title, spec_size):
-        """Verifica si el tamaño coincide exactamente"""
-        title_lower = title.lower()
-        
-        # Extraer número del spec_size
-        size_num_match = re.search(r'(\d+(?:\.\d+)?)', spec_size)
-        if not size_num_match:
-            return True
-        
-        spec_number = float(size_num_match.group(1))
-        
-        # Buscar tamaños en el título
-        size_patterns = [
-            r'(\d+(?:\.\d+)?)\s*(?:pulgada|inch|in|")',
-            r'(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)'
-        ]
-        
-        for pattern in size_patterns:
-            matches = re.findall(pattern, title_lower)
-            for match in matches:
-                if isinstance(match, tuple):
-                    # Para dimensiones como "2x3"
-                    for dimension in match:
-                        if abs(float(dimension) - spec_number) < 0.2:
-                            return True
-                else:
-                    # Para tamaños simples
-                    if abs(float(match) - spec_number) < 0.2:
-                        return True
-        
+        spec_num_match = re.search(r'(\d+(?:\.\d+)?)', spec_size)
+        if not spec_num_match: return False
+        spec_num = float(spec_num_match.group(1))
+
+        title_nums = re.findall(r'(\d+(?:\.\d+)?)', title)
+        for num_str in title_nums:
+            try:
+                # Compara con una tolerancia para variaciones (ej. 1.88" vs 2")
+                if abs(float(num_str) - spec_num) < 0.2:
+                    return True
+            except ValueError:
+                continue
         return False
-    
+
     def _verify_real_links(self, products):
-        """Verifica que los enlaces sean reales y funcionen"""
         verified = []
-        
         for product in products:
             link = product.get('link')
-            if not link:
-                continue
+            if not link: continue
             
             try:
-                # Verificar que el enlace responda
-                response = requests.head(link, timeout=5, allow_redirects=True)
+                # Usar un GET con stream que es más tolerante que HEAD
+                response = self.session.get(link, timeout=8, allow_redirects=True, stream=True)
                 if response.status_code < 400:
                     product['verified_link'] = True
                     verified.append(product)
-                    print(f"✅ Enlace verificado: {link}")
+                    print(f"✅ Enlace verificado ({response.status_code}): {link[:70]}...")
                 else:
-                    print(f"❌ Enlace no funciona ({response.status_code}): {link}")
-            except:
-                print(f"❌ Error verificando enlace: {link}")
+                    print(f"❌ Enlace no funciona ({response.status_code}): {link[:70]}...")
+            except requests.exceptions.RequestException as e:
+                print(f"❌ Error de red verificando enlace: {link[:70]}... ({e})")
                 continue
-        
         return verified
-    
+
     def _score_intelligent_relevance(self, products, specs, original_query):
-        """Scoring inteligente basado en especificaciones y relevancia"""
+        query_words = set(original_query.lower().split())
         
         for product in products:
+            title_lower = product['title'].lower()
             score = 0.0
-            title = product.get('title', '').lower()
             
-            # Score por especificaciones exactas (60% del score)
-            if specs:
-                spec_score = 0
-                total_specs = len(specs)
-                
-                for spec_type, spec_value in specs.items():
-                    if spec_value.lower() in title:
-                        spec_score += 1
-                
-                score += (spec_score / total_specs) * 0.6 if total_specs > 0 else 0
+            if product.get('spec_match'):
+                score += 0.5
             
-            # Score por relevancia del query (30% del score)
-            query_words = original_query.lower().split()
-            title_words = title.split()
-            matches = sum(1 for word in query_words if word in title)
-            score += (matches / len(query_words)) * 0.3 if query_words else 0
+            title_words = set(title_lower.split())
+            common_words = query_words.intersection(title_words)
+            relevance = len(common_words) / len(query_words) if query_words else 0
+            score += relevance * 0.4
+            product['title_relevance'] = relevance
             
-            # Score por fuente confiable (10% del score)
-            trusted_sources = ['amazon', 'walmart', 'target', 'best buy']
-            source = product.get('source', '').lower()
-            if any(trusted in source for trusted in trusted_sources):
+            trusted_sources = ['amazon', 'walmart', 'target', 'best buy', 'home depot', 'ebay', 'mercado libre']
+            if any(ts in product['source'].lower() for ts in trusted_sources):
                 score += 0.1
             
             product['intelligence_score'] = score
         
         return products
-    
+
     def _clean_text(self, text):
-        """Limpieza de texto"""
-        if not text: return "Producto disponible"
-        cleaned = html.escape(str(text), quote=True)
-        cleaned = re.sub(r'[^\w\s\-\.\,\(\)\[\]]', '', cleaned)
-        return cleaned[:300] + "..." if len(cleaned) > 300 else cleaned
+        if not text: return ""
+        cleaned = html.unescape(str(text))
+        return html.escape(cleaned, quote=True)
+
+# --- FIN DEL CÓDIGO CORREGIDO ---
+
 
 def render_page(title, content):
     return f'''<!DOCTYPE html><html><head><title>{title}</title><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -631,7 +424,6 @@ def api_search():
         
     except Exception as e:
         print(f"Error en búsqueda inteligente: {e}")
-        # Si hay error, NO devolver fallback - es mejor no mostrar nada que mostrar enlaces falsos
         session['last_search'] = {
             'query': data.get('query', 'búsqueda') if data else 'búsqueda',
             'products': [],
@@ -684,24 +476,21 @@ def results_page():
             
             # Badges inteligentes
             intel_badge = f'<div style="position:absolute;top:10px;left:10px;background:#9c27b0;color:white;padding:6px 10px;border-radius:15px;font-size:11px;font-weight:bold">🧠 {int(intelligence_score*100)}% MATCH</div>'
-            
+            spec_badge = ''
             if spec_match:
                 spec_badge = '<div style="position:absolute;top:40px;left:10px;background:#4caf50;color:white;padding:6px 10px;border-radius:15px;font-size:11px;font-weight:bold">🎯 ESPECIFICACIONES</div>'
-            else:
-                spec_badge = ''
             
+            link_badge = ''
             if verified_link:
-                link_badge = '<div style="position:absolute;top:70px;left:10px;background:#2196f3;color:white;padding:6px 10px;border-radius:15px;font-size:11px;font-weight:bold">✅ ENLACE REAL</div>'
-            else:
-                link_badge = ''
-            
+                top_pos = 70 if spec_match else 40
+                link_badge = f'<div style="position:absolute;top:{top_pos}px;left:10px;background:#2196f3;color:white;padding:6px 10px;border-radius:15px;font-size:11px;font-weight:bold">✅ ENLACE REAL</div>'
+
+            rank_badge = ''
             if i == 0:
                 rank_badge = '<div style="position:absolute;top:10px;right:10px;background:#ff5722;color:white;padding:8px 12px;border-radius:20px;font-size:12px;font-weight:bold">🏆 MEJOR MATCH</div>'
             elif i <= 2:
                 rank_badge = f'<div style="position:absolute;top:10px;right:10px;background:#ff9800;color:white;padding:8px 12px;border-radius:20px;font-size:12px;font-weight:bold">🥈 TOP {i+1}</div>'
-            else:
-                rank_badge = ''
-            
+
             title = html.escape(str(product.get('title', 'Producto')))
             price = html.escape(str(product.get('price', '$0.00')))
             source = html.escape(str(product.get('source', 'Tienda')))
@@ -709,8 +498,8 @@ def results_page():
             rating = html.escape(str(product.get('rating', '')))
             reviews = html.escape(str(product.get('reviews', '')))
             
-            rating_html = f"⭐ {rating}" if rating and rating != '0' else ""
-            reviews_html = f"📝 {reviews} reseñas" if reviews and reviews != '0' else ""
+            rating_html = f"⭐ {rating}" if rating and rating != '0' and rating != "None" else ""
+            reviews_html = f"📝 {reviews} reseñas" if reviews and reviews != '0' and reviews != "None" else ""
             
             products_html += f'''<div style="border:2px solid #4caf50;border-radius:12px;padding:25px;margin-bottom:20px;background:white;position:relative;box-shadow:0 6px 15px rgba(0,0,0,0.1)">
                 {intel_badge}{spec_badge}{link_badge}{rank_badge}
@@ -761,14 +550,17 @@ def results_page():
             {stats}{products_html}
         </div>'''
         return render_page('🧠 RESULTADOS INTELIGENTES', content)
-    except: return redirect(url_for('search_page'))
+    except Exception as e:
+        print(f"Error en la pagina de resultados: {e}")
+        return redirect(url_for('search_page'))
 
 @app.route('/api/test')
 def test_endpoint():
-    return jsonify({'status': 'SUCCESS', 'message': '🧠 Búsqueda Inteligente - Sin Enlaces Falsos', 'version': '17.0 - Inteligencia Artificial'})
+    return jsonify({'status': 'SUCCESS', 'message': '🧠 Búsqueda Inteligente - Sin Enlaces Falsos', 'version': '18.0 - FLEXIBLE'})
 
 if __name__ == '__main__':
-    print("🧠 BÚSQUEDA INTELIGENTE - SIN ENLACES FALSOS")
+    print("--- 🧠 BÚSQUEDA INTELIGENTE v18.0 (FLEXIBLE) ---")
     print("🎯 Especificaciones exactas + Enlaces reales verificados")
     print("🔗 CERO enlaces alucinados - Solo enlaces reales de la API")
+    print("✅ LISTO PARA RECIBIR BÚSQUEDAS")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
