@@ -17,6 +17,90 @@ class PriceFinder:
         self.product_indicators = ['buy', 'price', 'sale', 'store', 'shop', 'amazon', 'walmart', 'ebay', 'best buy']
         # Palabras irrelevantes a filtrar
         self.irrelevant_words = ['how to', 'tutorial', 'guide', 'wikipedia', 'definition', 'meaning', 'what is']
+        
+        # Especificaciones importantes a detectar y preservar
+        self.specifications = {
+            'colors': ['rojo', 'red', 'azul', 'blue', 'verde', 'green', 'amarillo', 'yellow', 'negro', 'black', 
+                      'blanco', 'white', 'gris', 'gray', 'rosa', 'pink', 'naranja', 'orange', 'morado', 'purple',
+                      'marrón', 'brown', 'dorado', 'gold', 'plateado', 'silver', 'transparente', 'clear'],
+            'sizes': ['pulgada', 'pulgadas', 'inch', 'inches', 'cm', 'centímetro', 'centímetros', 'mm', 'milímetro',
+                     'metro', 'metros', 'ft', 'feet', 'pie', 'pies', 'yard', 'yarda', 'yardas', 'oz', 'onza',
+                     'lb', 'libra', 'kg', 'kilogramo', 'gr', 'gramo', 'ml', 'litro', 'galón', 'small', 'medium',
+                     'large', 'xl', 'xxl', 'pequeño', 'mediano', 'grande'],
+            'materials': ['papel', 'paper', 'plástico', 'plastic', 'metal', 'acero', 'steel', 'madera', 'wood',
+                         'tela', 'fabric', 'algodón', 'cotton', 'cuero', 'leather', 'vidrio', 'glass', 'cerámica',
+                         'ceramic', 'goma', 'rubber', 'silicona', 'silicone', 'aluminio', 'aluminum'],
+            'brands': ['apple', 'samsung', 'nike', 'adidas', 'sony', 'lg', 'hp', 'dell', 'canon', 'epson',
+                      'microsoft', 'logitech', 'intel', 'amd', 'nvidia'],
+            'types': ['adhesiva', 'adhesive', 'impermeable', 'waterproof', 'resistente', 'resistant', 'flexible',
+                     'rígido', 'rigid', 'suave', 'soft', 'duro', 'hard', 'ligero', 'light', 'pesado', 'heavy']
+        }
+    
+    def _extract_specifications(self, query):
+        """Extrae especificaciones específicas del query"""
+        query_lower = query.lower()
+        found_specs = {
+            'colors': [],
+            'sizes': [],
+            'materials': [],
+            'brands': [],
+            'types': [],
+            'numbers': []
+        }
+        
+        # Buscar especificaciones por categoría
+        for category, terms in self.specifications.items():
+            for term in terms:
+                if term in query_lower:
+                    found_specs[category].append(term)
+        
+        # Extraer números con unidades (ej: "2 pulgadas", "5mm", "12oz")
+        import re
+        number_patterns = [
+            r'(\d+(?:\.\d+)?)\s*(pulgada|pulgadas|inch|inches|cm|mm|metros?|ft|feet|oz|lb|kg|gr|ml|litro|galón)',
+            r'(\d+(?:\.\d+)?)("|\'|cm|mm|in)',  # 2", 5', 10cm, etc.
+            r'(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)',  # 2x4, 5.5x3.2
+        ]
+        
+        for pattern in number_patterns:
+            matches = re.findall(pattern, query_lower)
+            for match in matches:
+                if isinstance(match, tuple):
+                    found_specs['numbers'].extend([str(m) for m in match if m])
+                else:
+                    found_specs['numbers'].append(str(match))
+        
+        return found_specs
+    
+    def _build_specific_query(self, original_query, specs):
+        """Construye consultas más específicas basadas en las especificaciones"""
+        base_query = original_query.strip()
+        
+        # Si no hay especificaciones, usar el query original
+        if not any(specs.values()):
+            return [f'"{base_query}" buy online store']
+        
+        # Construir consultas que preserven las especificaciones
+        specific_queries = []
+        
+        # Query exacto con comillas para preservar especificaciones
+        specific_queries.append(f'"{base_query}" buy online')
+        
+        # Query con especificaciones importantes destacadas
+        important_specs = []
+        for category, items in specs.items():
+            if items and category in ['colors', 'sizes', 'materials', 'numbers']:
+                important_specs.extend(items[:2])  # Máximo 2 specs por categoría
+        
+        if important_specs:
+            specs_string = ' '.join(important_specs)
+            specific_queries.append(f'{base_query} {specs_string} buy store')
+            specific_queries.append(f'"{specs_string}" {base_query.split()[0]} online')
+        
+        # Query para shopping específico
+        specific_queries.append(f'{base_query} price shop amazon walmart')
+        
+        return specific_queries[:4]  # Máximo 4 consultas
     
     def test_api_key(self):
         try:
