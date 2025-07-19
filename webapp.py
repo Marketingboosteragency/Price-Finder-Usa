@@ -5,15 +5,32 @@ import re
 import html
 from datetime import datetime
 from urllib.parse import urlparse, unquote, quote_plus
+import json
+
+# Importaciones de librerías adicionales (opcionales)
+try:
+    from bs4 import BeautifulSoup
+    import cloudscraper
+    from fake_useragent import UserAgent
+    from price_parser import Price
+    HAS_ENHANCED = True
+    print("✅ Librerías mejoradas cargadas: BeautifulSoup, CloudScraper, Price-Parser")
+except ImportError:
+    HAS_ENHANCED = False
+    print("⚠️ Usando modo básico. Para mejores resultados instala: pip install beautifulsoup4 cloudscraper fake-useragent price-parser lxml")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-class PriceFinder:
+class EnhancedPriceFinder:
     def __init__(self, api_key):
         self.api_key = api_key
         self.base_url = "https://serpapi.com/search"
-    
+        
+        if HAS_ENHANCED:
+            self.scraper = cloudscraper.create_scraper()
+            self.ua = UserAgent()
+        
     def test_api_key(self):
         try:
             params = {'engine': 'google', 'q': 'test', 'api_key': self.api_key, 'num': 1}
@@ -25,42 +42,507 @@ class PriceFinder:
         except:
             return {'valid': False, 'message': 'Error de conexión'}
     
-    def _extract_price(self, price_str):
-        """Extrae precios incluyendo ofertas y descuentos"""
+    def search_products(self, query):
+        """Búsqueda mejorada con múltiples fuentes"""
+        if not query:
+            return []
+        
+        all_products = []
+        
+        print(f"🔍 Iniciando búsqueda para: {query}")
+        
+        # 1. SerpAPI Google Shopping (principal)
+        try:
+            print("📡 Buscando en Google Shopping...")
+            serpapi_products = self._search_serpapi_shopping(query)
+            all_products.extend(serpapi_products)
+            print(f"✅ Google Shopping: {len(serpapi_products)} productos")
+        except Exception as e:
+            print(f"❌ Error Google Shopping: {e}")
+        
+        # 2. SerpAPI Bing Shopping
+        try:
+            print("📡 Buscando en Bing Shopping...")
+            bing_products = self._search_bing_shopping(query)
+            all_products.extend(bing_products)
+            print(f"✅ Bing Shopping: {len(bing_products)} productos")
+        except Exception as e:
+            print(f"❌ Error Bing Shopping: {e}")
+        
+        # 3. Scraping directo (si hay librerías mejoradas)
+        if HAS_ENHANCED and len(all_products) < 15:
+            try:
+                print("🕷️ Scraping directo de tiendas...")
+                scraped_products = self._scrape_direct_stores(query)
+                all_products.extend(scraped_products)
+                print(f"✅ Scraping directo: {len(scraped_products)} productos")
+            except Exception as e:
+                print(f"❌ Error scraping: {e}")
+        
+        # 4. Búsqueda específica por sitios
+        if len(all_products) < 10:
+            try:
+                print("🎯 Búsqueda específica por tiendas...")
+                site_products = self._search_specific_sites(query)
+                all_products.extend(site_products)
+                print(f"✅ Sitios específicos: {len(site_products)} productos")
+            except Exception as e:
+                print(f"❌ Error sitios específicos: {e}")
+        
+        print(f"📊 Total productos encontrados: {len(all_products)}")
+        
+        if all_products:
+            # Filtrar solo productos con links reales
+            real_products = [p for p in all_products if p and self._is_real_product_link(p.get('link', ''))]
+            print(f"✅ Productos con links reales: {len(real_products)}")
+            
+            if real_products:
+                unique_products = self._remove_duplicates(real_products)
+                sorted_products = sorted(unique_products, key=lambda x: x.get('price_numeric', 999))
+                print(f"🎯 Productos únicos ordenados: {len(sorted_products)}")
+                return sorted_products[:25]
+        
+        print("❌ No se encontraron productos reales")
+        return []
+    
+    def _search_serpapi_shopping(self, query):
+        """Búsqueda principal en Google Shopping"""
+        products = []
+        
+        # Múltiples consultas para mejores resultados
+        search_queries = [
+            query,
+            f"{query} cheap",
+            f"{query} sale discount",
+            f"{query} best price"
+        ]
+        
+        for search_query in search_queries[:2]:  # Limitar para no agotar créditos
+            try:
+                params = {
+                    'engine': 'google_shopping',
+                    'q': search_query,
+                    'api_key': self.api_key,
+                    'num': 50,
+                    'location': 'United States',
+                    'gl': 'us',
+                    'hl': 'en',
+                    'sort_by': 'price:asc',
+                    'safe': 'active'
+                }
+                
+                response = requests.get(self.base_url, params=params, timeout=15)
+                data = response.json() if response else None
+                
+                if data and 'shopping_results' in data:
+                    for item in data['shopping_results']:
+                        product = self._process_shopping_item(item)
+                        if product:
+                            products.append(product)
+                
+                if len(products) >= 20:
+                    break
+                    
+            except Exception as e:
+                print(f"Error en consulta '{search_query}': {e}")
+                continue
+        
+        return products
+    
+    def _search_bing_shopping(self, query):
+        """Búsqueda en Bing Shopping"""
+        try:
+            params = {
+                'engine': 'bing_shopping',
+                'q': query,
+                'api_key': self.api_key,
+                'count': 30,
+                'location': 'United States'
+            }
+            
+            response = requests.get(self.base_url, params=params, timeout=15)
+            data = response.json() if response else None
+            
+            products = []
+            if data and 'shopping_results' in data:
+                for item in data['shopping_results']:
+                    product = self._process_shopping_item(item)
+                    if product:
+                        products.append(product)
+            
+            return products
+        except:
+            return []
+    
+    def _scrape_direct_stores(self, query):
+        """Scraping directo de tiendas (requiere librerías adicionales)"""
+        if not HAS_ENHANCED:
+            return []
+        
+        products = []
+        
+        # Configurar headers realistas
+        headers = {
+            'User-Agent': self.ua.random,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        }
+        
+        # Tiendas para scraping directo
+        stores = [
+            {
+                'name': 'eBay',
+                'search_url': f'https://www.ebay.com/sch/i.html?_nkw={quote_plus(query)}&_sop=15',
+                'item_selector': '.s-item',
+                'title_selector': '.s-item__title',
+                'price_selector': '.s-item__price',
+                'link_selector': '.s-item__link'
+            },
+            {
+                'name': 'Walmart',
+                'search_url': f'https://www.walmart.com/search?q={quote_plus(query)}',
+                'item_selector': '[data-automation-id="product-title"]',
+                'title_selector': '[data-automation-id="product-title"]',
+                'price_selector': '[itemprop="price"]',
+                'link_selector': 'a'
+            }
+        ]
+        
+        for store in stores:
+            try:
+                store_products = self._scrape_single_store(store, headers)
+                products.extend(store_products)
+                if len(products) >= 15:
+                    break
+            except Exception as e:
+                print(f"Error scraping {store['name']}: {e}")
+                continue
+        
+        return products
+    
+    def _scrape_single_store(self, store, headers):
+        """Scraping de una tienda específica"""
+        products = []
+        
+        try:
+            response = self.scraper.get(store['search_url'], headers=headers, timeout=10)
+            soup = BeautifulSoup(response.content, 'lxml')
+            
+            items = soup.select(store['item_selector'])[:10]
+            
+            for item in items:
+                try:
+                    # Título
+                    title_elem = item.select_one(store['title_selector'])
+                    if not title_elem:
+                        continue
+                    title = title_elem.get_text(strip=True)
+                    
+                    if not title or len(title) < 5:
+                        continue
+                    
+                    # Precio usando price-parser
+                    price_elem = item.select_one(store['price_selector'])
+                    if price_elem:
+                        price_text = price_elem.get_text(strip=True)
+                    else:
+                        price_text = item.get_text()
+                    
+                    if HAS_ENHANCED:
+                        parsed_price = Price.fromstring(price_text)
+                        if not parsed_price.amount:
+                            continue
+                        price_numeric = float(parsed_price.amount)
+                    else:
+                        price_numeric = self._extract_price_basic(price_text)
+                    
+                    if price_numeric <= 0 or price_numeric > 10000:
+                        continue
+                    
+                    # Link
+                    link_elem = item.select_one(store['link_selector']) or item.select_one('a')
+                    if not link_elem:
+                        continue
+                    
+                    link = link_elem.get('href', '')
+                    if link.startswith('/'):
+                        if store['name'].lower() == 'ebay':
+                            link = 'https://www.ebay.com' + link
+                        elif store['name'].lower() == 'walmart':
+                            link = 'https://www.walmart.com' + link
+                    
+                    if not self._is_real_product_link(link):
+                        continue
+                    
+                    products.append({
+                        'title': self._clean_text(title),
+                        'price': f"${price_numeric:.2f}",
+                        'price_numeric': price_numeric,
+                        'source': store['name'],
+                        'link': link,
+                        'rating': '',
+                        'reviews': '',
+                        'image': '',
+                        'is_real': True,
+                        'source_type': 'scraped'
+                    })
+                    
+                except Exception as e:
+                    print(f"Error procesando item: {e}")
+                    continue
+        
+        except Exception as e:
+            print(f"Error scraping {store['name']}: {e}")
+        
+        return products
+    
+    def _search_specific_sites(self, query):
+        """Búsqueda específica usando site: operator"""
+        products = []
+        
+        site_searches = [
+            f'site:amazon.com {query} -site:amazon.com/s',
+            f'site:ebay.com {query} -site:ebay.com/sch',
+            f'site:walmart.com {query} -site:walmart.com/search'
+        ]
+        
+        for site_query in site_searches:
+            try:
+                params = {
+                    'engine': 'google',
+                    'q': site_query,
+                    'api_key': self.api_key,
+                    'num': 10,
+                    'location': 'United States'
+                }
+                
+                response = requests.get(self.base_url, params=params, timeout=10)
+                data = response.json() if response else None
+                
+                if data and 'organic_results' in data:
+                    for item in data['organic_results']:
+                        product = self._process_organic_result(item)
+                        if product and self._is_real_product_link(product['link']):
+                            products.append(product)
+            except:
+                continue
+        
+        return products
+    
+    def _process_shopping_item(self, item):
+        """Procesa items de shopping con validación estricta"""
+        if not item:
+            return None
+        
+        try:
+            # Extraer precio
+            price_str = item.get('price', '')
+            if not price_str:
+                for field in ['extracted_price', 'sale_price', 'current_price']:
+                    if item.get(field):
+                        price_str = item[field]
+                        break
+            
+            price_num = self._extract_price_enhanced(price_str) if HAS_ENHANCED else self._extract_price_basic(price_str)
+            if price_num <= 0:
+                return None
+            
+            # Extraer link REAL del producto
+            product_link = self._extract_real_product_link(item)
+            if not product_link:
+                return None
+            
+            # Verificar título
+            title = item.get('title', '')
+            if not title or len(title.strip()) < 5:
+                return None
+            
+            # Fuente
+            source = item.get('source', item.get('merchant', ''))
+            if not source:
+                try:
+                    parsed = urlparse(product_link)
+                    source = parsed.netloc.replace('www.', '')
+                except:
+                    source = 'Unknown Store'
+            
+            return {
+                'title': self._clean_text(title),
+                'price': f"${price_num:.2f}",
+                'price_numeric': float(price_num),
+                'source': self._clean_text(source),
+                'link': product_link,
+                'rating': str(item.get('rating', '')),
+                'reviews': str(item.get('reviews', '')),
+                'image': str(item.get('thumbnail', '')),
+                'is_real': True,
+                'source_type': 'api'
+            }
+            
+        except Exception as e:
+            print(f"Error procesando shopping item: {e}")
+            return None
+    
+    def _process_organic_result(self, item):
+        """Procesa resultados orgánicos buscando precios"""
+        if not item:
+            return None
+        
+        try:
+            # Buscar precio en snippet y título
+            search_text = f"{item.get('snippet', '')} {item.get('title', '')}"
+            price_match = re.search(r'\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)', search_text)
+            
+            if not price_match:
+                return None
+            
+            price_str = price_match.group(0)
+            price_num = self._extract_price_basic(price_str)
+            
+            if price_num <= 0:
+                return None
+            
+            link = item.get('link', '')
+            if not self._is_real_product_link(link):
+                return None
+            
+            # Extraer fuente del link
+            try:
+                parsed = urlparse(link)
+                source = parsed.netloc.replace('www.', '')
+            except:
+                source = item.get('displayed_link', 'Unknown')
+            
+            return {
+                'title': self._clean_text(item.get('title', 'Product')),
+                'price': price_str,
+                'price_numeric': float(price_num),
+                'source': self._clean_text(source),
+                'link': link,
+                'rating': '',
+                'reviews': '',
+                'image': '',
+                'is_real': True,
+                'source_type': 'organic'
+            }
+            
+        except:
+            return None
+    
+    def _extract_real_product_link(self, item):
+        """Extrae SOLO links reales de productos específicos"""
+        if not item:
+            return ""
+        
+        for field in ['product_link', 'link', 'serpapi_product_api_link']:
+            if field in item and item[field]:
+                raw_link = str(item[field])
+                
+                # Extraer de redirects de Google
+                if 'url=' in raw_link:
+                    try:
+                        decoded_link = unquote(raw_link.split('url=')[1].split('&')[0])
+                    except:
+                        decoded_link = raw_link
+                elif 'q=' in raw_link and 'google.com' in raw_link:
+                    try:
+                        decoded_link = unquote(raw_link.split('q=')[1].split('&')[0])
+                    except:
+                        decoded_link = raw_link
+                else:
+                    decoded_link = raw_link
+                
+                if self._is_real_product_link(decoded_link):
+                    return decoded_link
+        
+        return ""
+    
+    def _is_real_product_link(self, link):
+        """Validación estricta de links reales de productos"""
+        if not link:
+            return False
+        
+        try:
+            link_lower = str(link).lower()
+            
+            # Rechazar búsquedas generales
+            search_indicators = [
+                '/search?', '/s?k=', '/sch/', '?q=', 'search=', 
+                '/search/', 'query=', '_nkw=', 'searchterm=',
+                'google.com/search', 'bing.com/search', '/browse/',
+                '/category/', '/categories/', '/shop/', '/store/'
+            ]
+            
+            if any(indicator in link_lower for indicator in search_indicators):
+                return False
+            
+            # Patrones de URLs de productos válidos
+            product_patterns = [
+                r'/dp/[A-Z0-9]+',           # Amazon DP
+                r'/gp/product/[A-Z0-9]+',   # Amazon GP
+                r'/itm/\d+',                # eBay item
+                r'/p/\d+',                  # eBay/Target product
+                r'/ip/\d+',                 # Walmart IP
+                r'/pd/[^/]+/\d+',          # Lowe's product
+                r'/product/[^/]+',          # Generic product
+                r'/listing/\d+',            # Etsy listing
+                r'/item/\d+',               # Generic item
+                r'-p-\d+',                  # Some stores use this format
+            ]
+            
+            # Verificar patrones de productos
+            has_product_pattern = any(re.search(pattern, link_lower) for pattern in product_patterns)
+            
+            # Tiendas válidas conocidas
+            valid_domains = [
+                'amazon.com', 'ebay.com', 'walmart.com', 'target.com',
+                'homedepot.com', 'lowes.com', 'bestbuy.com', 'costco.com',
+                'overstock.com', 'wayfair.com', 'etsy.com', 'mercari.com',
+                'alibaba.com', 'aliexpress.com', 'liquidator', 'clearance'
+            ]
+            
+            has_valid_domain = any(domain in link_lower for domain in valid_domains)
+            
+            if has_product_pattern or has_valid_domain:
+                parsed = urlparse(link)
+                return bool(parsed.scheme and parsed.netloc)
+            
+            return False
+            
+        except:
+            return False
+    
+    def _extract_price_enhanced(self, price_str):
+        """Extracción de precios con price-parser"""
+        try:
+            parsed = Price.fromstring(str(price_str))
+            if parsed.amount:
+                return float(parsed.amount)
+        except:
+            pass
+        
+        return self._extract_price_basic(price_str)
+    
+    def _extract_price_basic(self, price_str):
+        """Extracción básica de precios"""
         if not price_str:
             return 0.0
         try:
             price_text = str(price_str).lower()
             
-            # Buscar precios de oferta primero (más importantes)
+            # Buscar precios de oferta primero
             sale_patterns = [
-                r'sale[:\s]*\$?(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)',  # Sale: $X.XX
-                r'now[:\s]*\$?(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)',   # Now: $X.XX
-                r'was.*now[:\s]*\$?(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)', # Was $X Now $Y
-                r'offer[:\s]*\$?(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)', # Offer: $X.XX
+                r'(?:sale|now|offer|deal)[:\s]*\$?(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)',
+                r'\$(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)',
+                r'(\d+\.\d{2})',
+                r'(\d+)',
             ]
             
             for pattern in sale_patterns:
                 matches = re.findall(pattern, price_text)
-                if matches:
-                    try:
-                        price_value = float(matches[-1].replace(',', ''))  # Último precio (más bajo)
-                        if 0.01 <= price_value <= 50000:
-                            return price_value
-                    except:
-                        continue
-            
-            # Patrones normales de precio
-            price_clean = re.sub(r'[^\d.,\$]', '', price_text)
-            price_patterns = [
-                r'\$(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)',  # $1,234.56
-                r'(\d{1,4}(?:,\d{3})*\.\d{2})',        # 1,234.56
-                r'(\d+\.\d{2})',                       # 123.45
-                r'(\d+)',                              # 123
-            ]
-            
-            for pattern in price_patterns:
-                matches = re.findall(pattern, price_clean)
                 if matches:
                     try:
                         price_value = float(matches[0].replace(',', ''))
@@ -78,186 +560,6 @@ class PriceFinder:
         cleaned = html.escape(str(text), quote=True)
         return cleaned[:150] + "..." if len(cleaned) > 150 else cleaned
     
-    def _get_link(self, item):
-        if not item:
-            return ""
-        
-        # Buscar link en múltiples campos
-        for field in ['product_link', 'link', 'serpapi_product_api']:
-            if field in item and item[field]:
-                link = str(item[field])
-                # Extraer de redirects de Google
-                if 'url=' in link:
-                    try:
-                        link = unquote(link.split('url=')[1].split('&')[0])
-                    except:
-                        pass
-                elif 'q=' in link and 'google.com' in link:
-                    try:
-                        link = unquote(link.split('q=')[1].split('&')[0])
-                    except:
-                        pass
-                
-                if self._is_valid_link(link):
-                    return link
-        
-        # Fallback: link de búsqueda
-        title = item.get('title', '')
-        return f"https://www.google.com/search?q={quote_plus(str(title))}" if title else ""
-    
-    def _is_valid_link(self, link):
-        try:
-            parsed = urlparse(str(link))
-            return bool(parsed.scheme and parsed.netloc and 
-                       not any(bad in link.lower() for bad in ['javascript:', 'mailto:', 'tel:']))
-        except:
-            return False
-    
-    def search_products(self, query):
-        """Búsqueda optimizada para encontrar ofertas baratas"""
-        if not query:
-            return self._get_examples("producto")
-        
-        all_products = []
-        
-        # 1. Búsqueda principal con términos de oferta
-        deal_queries = [
-            f'{query} sale discount cheap deal',
-            f'{query} clearance offer promotion',
-            f'{query} best price lowest',
-            f'{query} buy online store',
-            query  # Búsqueda original como fallback
-        ]
-        
-        for search_query in deal_queries:
-            try:
-                products = self._search_api('google_shopping', search_query, get_more=True)
-                if products:
-                    all_products.extend(products)
-                    if len(all_products) >= 50:  # Obtener más productos para mejores ofertas
-                        break
-            except:
-                continue
-        
-        # 2. Si no hay suficientes resultados, buscar en Google regular
-        if len(all_products) < 10:
-            try:
-                regular_products = self._search_api('google', f'{query} price cheap deal online store')
-                if regular_products:
-                    all_products.extend(regular_products)
-            except:
-                pass
-        
-        # 3. Filtrar y ordenar por precio (más barato primero)
-        if all_products:
-            # Remover duplicados por título similar
-            unique_products = self._remove_duplicates(all_products)
-            # Ordenar por precio (más barato primero)
-            sorted_products = sorted(unique_products, key=lambda x: x['price_numeric'])
-            # Priorizar productos con palabras clave de oferta
-            prioritized = self._prioritize_deals(sorted_products)
-            return prioritized[:20]  # Más resultados para mejores opciones
-        
-        # 4. Último fallback: ejemplos con precios bajos
-        return self._get_examples(query)
-    
-    def _search_api(self, engine, query, get_more=False):
-        """API search optimizada para ofertas"""
-        params = {
-            'engine': engine,
-            'q': query,
-            'api_key': self.api_key,
-            'num': 50 if get_more else 20,  # Más resultados para mejores ofertas
-            'location': 'United States',
-            'gl': 'us',
-            'hl': 'en',
-            'safe': 'active'
-        }
-        
-        # Parámetros adicionales para Google Shopping
-        if engine == 'google_shopping':
-            params.update({
-                'sort_by': 'price:asc',  # Ordenar por precio ascendente
-                'min_price': 0.01,       # Incluir productos muy baratos
-                'max_price': 1000,       # Rango amplio pero razonable
-            })
-        
-        response = requests.get(self.base_url, params=params, timeout=15)
-        data = response.json() if response else None
-        
-        if not data or 'error' in data:
-            raise Exception("API error")
-        
-        products = []
-        results_key = 'shopping_results' if engine == 'google_shopping' else 'organic_results'
-        
-        if results_key in data and data[results_key]:
-            for item in data[results_key]:
-                product = self._process_item(item, engine)
-                if product and product['price_numeric'] > 0:  # Solo productos con precio válido
-                    products.append(product)
-        
-        return products
-    
-    def _process_item(self, item, engine):
-        """Procesamiento optimizado para capturar ofertas"""
-        if not item:
-            return None
-        
-        try:
-            # Extraer precio (incluyendo ofertas)
-            price_str = ''
-            
-            # Buscar en múltiples campos para ofertas
-            price_fields = ['price', 'sale_price', 'current_price', 'offer_price', 'discounted_price']
-            for field in price_fields:
-                if field in item and item[field]:
-                    price_str = item[field]
-                    break
-            
-            # Si no hay precio directo, buscar en snippet/title para ofertas
-            if not price_str and engine == 'google':
-                search_text = f"{item.get('snippet', '')} {item.get('title', '')}"
-                # Buscar patrones de oferta en el texto
-                offer_match = re.search(r'(?:sale|now|offer|deal)[:\s]*\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)', search_text.lower())
-                if offer_match:
-                    price_str = f"${offer_match.group(1)}"
-                else:
-                    # Buscar precio normal
-                    price_match = re.search(r'\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)', search_text)
-                    if price_match:
-                        price_str = price_match.group(0)
-            
-            price_num = self._extract_price(price_str)
-            if price_num == 0:
-                return None  # Rechazar productos sin precio válido
-            
-            # Detectar si es una oferta
-            title_lower = str(item.get('title', '')).lower()
-            is_deal = any(word in title_lower for word in ['sale', 'deal', 'clearance', 'discount', 'offer', 'promo'])
-            
-            # Obtener información del vendedor
-            source = item.get('source', item.get('merchant', item.get('displayed_link', 'Tienda Online')))
-            
-            # No filtrar sitios de descuentos legítimos
-            deal_sites = ['liquidator', 'clearance', 'outlet', 'discount', 'deal', 'sale']
-            is_deal_site = any(site in str(source).lower() for site in deal_sites)
-            
-            return {
-                'title': self._clean_text(item.get('title', 'Producto disponible')),
-                'price': str(price_str) if price_str else f"${price_num:.2f}",
-                'price_numeric': float(price_num),
-                'source': self._clean_text(source),
-                'link': self._get_link(item),
-                'rating': str(item.get('rating', '')),
-                'reviews': str(item.get('reviews', '')),
-                'image': str(item.get('thumbnail', '')),
-                'is_deal': is_deal,
-                'is_deal_site': is_deal_site
-            }
-        except:
-            return None
-    
     def _remove_duplicates(self, products):
         """Remover duplicados manteniendo el más barato"""
         seen_titles = {}
@@ -272,64 +574,12 @@ class PriceFinder:
                 seen_titles[title_key] = product
                 unique_products.append(product)
             else:
-                # Si encontramos uno más barato, reemplazar
                 if product['price_numeric'] < seen_titles[title_key]['price_numeric']:
-                    # Remover el anterior
                     unique_products = [p for p in unique_products if p['title'][:50].lower().strip() != title_key]
-                    # Agregar el más barato
                     unique_products.append(product)
                     seen_titles[title_key] = product
         
         return unique_products
-    
-    def _prioritize_deals(self, products):
-        """Priorizar ofertas y productos baratos"""
-        # Separar productos por tipo
-        deals = []
-        regular = []
-        
-        for product in products:
-            if product.get('is_deal') or product.get('is_deal_site'):
-                deals.append(product)
-            else:
-                regular.append(product)
-        
-        # Ordenar deals por precio (más baratos primero)
-        deals.sort(key=lambda x: x['price_numeric'])
-        regular.sort(key=lambda x: x['price_numeric'])
-        
-        # Combinar: ofertas primero, luego regulares
-        return deals + regular
-    
-    def _get_examples(self, query):
-        """Ejemplos con precios realmente baratos"""
-        search_query = quote_plus(str(query))
-        return [
-            {
-                'title': f'{self._clean_text(query)} - OFERTA ESPECIAL ⚡',
-                'price': '$1.99', 'price_numeric': 1.99, 'source': 'Discount Store',
-                'link': f'https://www.amazon.com/s?k={search_query}+cheap+deal',
-                'rating': '4.3', 'reviews': '2,156', 'image': '', 'is_deal': True
-            },
-            {
-                'title': f'{self._clean_text(query)} - Clearance Sale 🔥',
-                'price': '$3.49', 'price_numeric': 3.49, 'source': 'Outlet Store',
-                'link': f'https://www.ebay.com/sch/i.html?_nkw={search_query}+clearance',
-                'rating': '4.1', 'reviews': '1,089', 'image': '', 'is_deal': True
-            },
-            {
-                'title': f'{self._clean_text(query)} - Best Price 💰',
-                'price': '$5.99', 'price_numeric': 5.99, 'source': 'Deal Finder',
-                'link': f'https://www.walmart.com/search/?query={search_query}+rollback',
-                'rating': '4.4', 'reviews': '856', 'image': '', 'is_deal': True
-            },
-            {
-                'title': f'{self._clean_text(query)} - Premium Quality',
-                'price': '$12.99', 'price_numeric': 12.99, 'source': 'Regular Store',
-                'link': f'https://www.google.com/search?q={search_query}',
-                'rating': '4.5', 'reviews': '432', 'image': '', 'is_deal': False
-            }
-        ]
 
 def render_page(title, content):
     return f'''<!DOCTYPE html>
@@ -355,21 +605,20 @@ def render_page(title, content):
         .search-bar {{ display: flex; gap: 10px; margin-bottom: 25px; }}
         .search-bar input {{ flex: 1; }}
         .search-bar button {{ width: auto; padding: 15px 25px; }}
-        .tips {{ background: #fff3cd; border: 1px solid #ffc107; padding: 20px; 
+        .tips {{ background: #e8f5e8; border: 1px solid #4caf50; padding: 20px; 
                 border-radius: 8px; margin-bottom: 20px; }}
         .features {{ background: #f8f9fa; padding: 20px; border-radius: 8px; margin-top: 25px; }}
         .features ul {{ list-style: none; }}
         .features li {{ padding: 5px 0; }}
-        .features li:before {{ content: "🔥 "; }}
+        .features li:before {{ content: "🚀 "; }}
         .error {{ background: #ffebee; color: #c62828; padding: 15px; border-radius: 8px; 
                  margin: 15px 0; display: none; }}
         .loading {{ text-align: center; padding: 40px; display: none; }}
         .spinner {{ border: 4px solid #f3f3f3; border-top: 4px solid #1a73e8; border-radius: 50%; 
                    width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 0 auto 20px; }}
         @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
-        .deal-badge {{ background: linear-gradient(45deg, #ff6b6b, #ee5a24); color: white; 
-                     padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; 
-                     display: inline-block; margin-left: 8px; }}
+        .enhancement-note {{ background: #fff3cd; border: 1px solid #ffc107; padding: 15px; 
+                           border-radius: 8px; margin-top: 15px; }}
     </style>
 </head>
 <body>{content}</body>
@@ -377,31 +626,37 @@ def render_page(title, content):
 
 @app.route('/')
 def index():
-    content = '''
+    enhancement_status = "✅ Modo MEJORADO activado" if HAS_ENHANCED else "⚠️ Modo básico - instala librerías para mejores resultados"
+    
+    content = f'''
     <div class="container">
-        <h1>💰 Price Finder USA - DEALS</h1>
-        <p class="subtitle">🔥 Optimizado para encontrar las mejores ofertas</p>
+        <h1>🚀 Price Finder USA - ENHANCED</h1>
+        <p class="subtitle">🎯 Múltiples fuentes + Scraping directo + APIs</p>
+        
+        <div class="enhancement-note">
+            <strong>{enhancement_status}</strong><br>
+            {'Scraping directo + Price-parser + CloudScraper funcionando' if HAS_ENHANCED else 'Para mejores resultados: pip install beautifulsoup4 cloudscraper fake-useragent price-parser lxml'}
+        </div>
+        
         <form id="setupForm">
             <label for="apiKey">API Key de SerpAPI:</label>
             <input type="text" id="apiKey" placeholder="Pega aquí tu API key..." required>
-            <button type="submit">✅ Configurar y Buscar Ofertas</button>
+            <button type="submit">🚀 Activar Búsqueda ENHANCED</button>
         </form>
+        
         <div class="features">
-            <h3>🔥 Especializado en ofertas baratas:</h3>
+            <h3>🚀 Características ENHANCED:</h3>
             <ul>
-                <li>Busca específicamente sales y clearance</li>
-                <li>Prioriza productos con descuentos</li>
-                <li>Incluye sitios de liquidación</li>
-                <li>Ordena por precio más bajo primero</li>
-                <li>Detecta ofertas automáticamente</li>
+                <li>Google Shopping + Bing Shopping APIs</li>
+                <li>Scraping directo de eBay, Walmart {"(ACTIVO)" if HAS_ENHANCED else "(requiere librerías)"}</li>
+                <li>Price-parser inteligente {"(ACTIVO)" if HAS_ENHANCED else "(requiere librerías)"}</li>
+                <li>CloudScraper anti-detección {"(ACTIVO)" if HAS_ENHANCED else "(requiere librerías)"}</li>
+                <li>Validación estricta de links reales</li>
+                <li>Hasta 25 productos de múltiples fuentes</li>
+                <li>Detección automática de ofertas</li>
             </ul>
-            <p style="margin-top: 15px;">
-                <strong>¿No tienes API key?</strong> 
-                <a href="https://serpapi.com/" target="_blank" style="color: #1a73e8;">
-                    Obtén una gratis aquí (100 búsquedas/mes)
-                </a>
-            </p>
         </div>
+        
         <div id="error" class="error"></div>
         <div id="loading" class="loading">
             <div class="spinner"></div>
@@ -409,29 +664,29 @@ def index():
         </div>
     </div>
     <script>
-        document.getElementById('setupForm').addEventListener('submit', function(e) {
+        document.getElementById('setupForm').addEventListener('submit', function(e) {{
             e.preventDefault();
             const apiKey = document.getElementById('apiKey').value.trim();
             if (!apiKey) return showError('Por favor ingresa tu API key');
             
             showLoading();
-            fetch('/setup', {
+            fetch('/setup', {{
                 method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
                 body: 'api_key=' + encodeURIComponent(apiKey)
-            })
+            }})
             .then(response => response.json())
-            .then(data => {
+            .then(data => {{
                 hideLoading();
                 data.success ? window.location.href = '/search' : showError(data.error || 'Error al configurar API key');
-            })
-            .catch(() => { hideLoading(); showError('Error de conexión'); });
-        });
-        function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
-        function hideLoading() { document.getElementById('loading').style.display = 'none'; }
-        function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
+            }})
+            .catch(() => {{ hideLoading(); showError('Error de conexión'); }});
+        }});
+        function showLoading() {{ document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }}
+        function hideLoading() {{ document.getElementById('loading').style.display = 'none'; }}
+        function showError(msg) {{ hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }}
     </script>'''
-    return render_page('💰 Price Finder USA - DEALS', content)
+    return render_page('🚀 Price Finder USA - ENHANCED', content)
 
 @app.route('/setup', methods=['POST'])
 def setup_api():
@@ -440,7 +695,7 @@ def setup_api():
         if not api_key:
             return jsonify({'error': 'API key requerida'}), 400
         
-        price_finder = PriceFinder(api_key)
+        price_finder = EnhancedPriceFinder(api_key)
         test_result = price_finder.test_api_key()
         
         if not test_result.get('valid'):
@@ -456,35 +711,46 @@ def search_page():
     if 'api_key' not in session:
         return redirect(url_for('index'))
     
-    content = '''
+    enhancement_note = "🚀 Scraping + APIs múltiples activos" if HAS_ENHANCED else "📱 Modo básico - SerpAPI únicamente"
+    
+    content = f'''
     <div class="container">
-        <h1>🔍 Buscar Ofertas</h1>
-        <p class="subtitle">💰 Encuentra los precios más baratos disponibles</p>
+        <h1>🔍 Búsqueda ENHANCED</h1>
+        <p class="subtitle">🎯 Múltiples fuentes para mejores resultados</p>
+        
+        <div class="enhancement-note">
+            <strong>{enhancement_note}</strong>
+        </div>
+        
         <form id="searchForm">
             <div class="search-bar">
-                <input type="text" id="searchQuery" placeholder="Ej: cinta adhesiva azul, iPhone barato..." required>
-                <button type="submit">🔥 Buscar Ofertas</button>
+                <input type="text" id="searchQuery" placeholder="Ej: iPhone 15, cinta adhesiva azul, laptop gaming..." required>
+                <button type="submit">🚀 Buscar ENHANCED</button>
             </div>
         </form>
+        
         <div class="tips">
-            <h4>💰 ¡Especialista en ofertas baratas!</h4>
+            <h4>🚀 Búsqueda con múltiples fuentes:</h4>
             <ul style="margin: 10px 0 0 20px;">
-                <li><strong>Busca automáticamente</strong> sales, clearance y descuentos</li>
-                <li><strong>Incluye sitios de liquidación</strong> como el que mencionaste</li>
-                <li><strong>Prioriza productos baratos</strong> en los resultados</li>
-                <li><strong>Detecta ofertas especiales</strong> y promociones</li>
+                <li><strong>Google Shopping</strong> - API principal</li>
+                <li><strong>Bing Shopping</strong> - Resultados alternativos</li>
+                <li><strong>Scraping directo</strong> - eBay, Walmart {"✅" if HAS_ENHANCED else "❌"}</li>
+                <li><strong>Búsquedas específicas</strong> - site:amazon.com, etc.</li>
+                <li><strong>Validación estricta</strong> - Solo links reales a productos</li>
             </ul>
         </div>
+        
         <div id="loading" class="loading">
             <div class="spinner"></div>
-            <h3>🔥 Buscando las mejores ofertas...</h3>
-            <p>Analizando sales, clearance y descuentos...</p>
+            <h3>🚀 Búsqueda ENHANCED en progreso...</h3>
+            <p>Analizando múltiples fuentes y validando links...</p>
         </div>
+        
         <div id="error" class="error"></div>
     </div>
     <script>
         let searching = false;
-        document.getElementById('searchForm').addEventListener('submit', function(e) {
+        document.getElementById('searchForm').addEventListener('submit', function(e) {{
             e.preventDefault();
             if (searching) return;
             const query = document.getElementById('searchQuery').value.trim();
@@ -492,23 +758,23 @@ def search_page():
             
             searching = true;
             showLoading();
-            fetch('/api/search', {
+            fetch('/api/search', {{
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({query: query})
-            })
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{query: query}})
+            }})
             .then(response => response.json())
-            .then(data => {
+            .then(data => {{
                 searching = false;
                 data.success ? window.location.href = '/results' : (hideLoading(), showError(data.error || 'Error en la búsqueda'));
-            })
-            .catch(() => { searching = false; hideLoading(); showError('Error de conexión'); });
-        });
-        function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
-        function hideLoading() { document.getElementById('loading').style.display = 'none'; }
-        function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
+            }})
+            .catch(() => {{ searching = false; hideLoading(); showError('Error de conexión'); }});
+        }});
+        function showLoading() {{ document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }}
+        function hideLoading() {{ document.getElementById('loading').style.display = 'none'; }}
+        function showError(msg) {{ hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }}
     </script>'''
-    return render_page('🔍 Buscar Ofertas - Price Finder USA', content)
+    return render_page('🔍 Búsqueda ENHANCED - Price Finder USA', content)
 
 @app.route('/api/search', methods=['POST'])
 def api_search():
@@ -521,32 +787,34 @@ def api_search():
         if not query:
             return jsonify({'error': 'Consulta requerida'}), 400
         
-        price_finder = PriceFinder(session['api_key'])
+        price_finder = EnhancedPriceFinder(session['api_key'])
         products = price_finder.search_products(query)
         
         if not products:
-            products = price_finder._get_examples(query)
+            return jsonify({
+                'success': False, 
+                'error': 'No se encontraron productos reales para esta búsqueda. Intenta con términos más específicos o marcas conocidas.',
+                'suggestion': 'Prueba con: marca + modelo específico, palabras más descriptivas, o términos en inglés'
+            })
         
         session['last_search'] = {
             'query': query,
             'products': products,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'enhanced_mode': HAS_ENHANCED
         }
         
-        return jsonify({'success': True, 'products': products, 'total': len(products)})
+        return jsonify({
+            'success': True, 
+            'products': products, 
+            'total': len(products),
+            'enhanced_mode': HAS_ENHANCED,
+            'sources_used': list(set([p.get('source_type', 'api') for p in products]))
+        })
+        
     except Exception as e:
-        # Fallback con ofertas baratas
-        try:
-            query = request.get_json().get('query', 'producto') if request.get_json() else 'producto'
-            fallback = [{
-                'title': f'OFERTA: {query} 🔥', 'price': '$2.99', 'price_numeric': 2.99,
-                'source': 'Deal Store', 'link': f'https://www.google.com/search?q={quote_plus(str(query))}+cheap+deal',
-                'rating': '4.2', 'reviews': '150', 'image': '', 'is_deal': True
-            }]
-            session['last_search'] = {'query': str(query), 'products': fallback, 'timestamp': datetime.now().isoformat()}
-            return jsonify({'success': True, 'products': fallback, 'total': 1})
-        except:
-            return jsonify({'error': f'Error interno: {str(e)}'}), 500
+        print(f"Error en api_search: {e}")
+        return jsonify({'error': f'Error de búsqueda: {str(e)}'}), 500
 
 @app.route('/results')
 def results_page():
@@ -557,116 +825,138 @@ def results_page():
         search_data = session['last_search']
         products = search_data.get('products', [])
         query = html.escape(str(search_data.get('query', 'búsqueda')))
+        enhanced_mode = search_data.get('enhanced_mode', False)
         
-        # Generar HTML de productos con énfasis en ofertas
+        if not products:
+            no_results_content = f'''
+            <div style="max-width: 900px; margin: 0 auto;">
+                <h1 style="color: white; text-align: center; margin-bottom: 10px;">❌ Sin resultados para: "{query}"</h1>
+                <div style="background: white; padding: 40px; border-radius: 15px; text-align: center;">
+                    <h3 style="color: #666; margin-bottom: 20px;">No encontramos productos reales con links directos</h3>
+                    <p style="color: #888; margin-bottom: 30px;">
+                        Sistema ENHANCED activó múltiples fuentes pero no encontró productos válidos.<br>
+                        Intenta con términos más específicos, marcas conocidas, o palabras en inglés.
+                    </p>
+                    <a href="/search" style="background: #1a73e8; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: 600;">
+                        🔍 Intentar Nueva Búsqueda
+                    </a>
+                </div>
+            </div>'''
+            return render_page('Sin Resultados - Price Finder USA', no_results_content)
+        
+        # Generar HTML de productos con indicadores de fuente
         products_html = ""
         
-        for i, product in enumerate(products[:20]):  # Mostrar más productos
+        for i, product in enumerate(products):
             if not product:
                 continue
             
-            # Badges especiales para ofertas
+            # Badges según posición y tipo de fuente
             badge = ""
-            if product.get('is_deal') and i == 0:
-                badge = '<div style="position: absolute; top: 10px; right: 10px; background: linear-gradient(45deg, #ff6b6b, #ee5a24); color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold; animation: pulse 2s infinite;">🔥 SUPER OFERTA</div>'
-            elif product.get('is_deal'):
-                badge = '<div style="position: absolute; top: 10px; right: 10px; background: linear-gradient(45deg, #ffa726, #ff7043); color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">💰 OFERTA</div>'
-            elif i == 0:
+            source_type = product.get('source_type', 'api')
+            
+            if i == 0:
                 badge = '<div style="position: absolute; top: 10px; right: 10px; background: #4caf50; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">🥇 MÁS BARATO</div>'
             elif i == 1:
                 badge = '<div style="position: absolute; top: 10px; right: 10px; background: #ff9800; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">🥈 2º MÁS BARATO</div>'
+            elif i == 2:
+                badge = '<div style="position: absolute; top: 10px; right: 10px; background: #9c27b0; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">🥉 3º MÁS BARATO</div>'
+            
+            # Indicador de fuente
+            source_indicators = {
+                'scraped': '🕷️ SCRAPED',
+                'api': '📡 API',
+                'organic': '🔍 SEARCH'
+            }
+            source_indicator = source_indicators.get(source_type, '📡 API')
             
             title = html.escape(str(product.get('title', 'Producto')))
             price = html.escape(str(product.get('price', '$0.00')))
             source = html.escape(str(product.get('source', 'Tienda')))
-            link = html.escape(str(product.get('link', '#')))
+            link = product.get('link', '#')
             rating = html.escape(str(product.get('rating', '')))
             reviews = html.escape(str(product.get('reviews', '')))
-            
-            # Destacar si es oferta en el título
-            if product.get('is_deal'):
-                title_display = f'🔥 {title}'
-                price_color = '#d32f2f'  # Rojo para ofertas
-            else:
-                title_display = title
-                price_color = '#2e7d32'  # Verde normal
             
             rating_html = f"⭐ {rating}" if rating else ""
             reviews_html = f"📝 {reviews} reseñas" if reviews else ""
             
-            # Estilo especial para ofertas
-            card_style = "border: 2px solid #ff6b6b;" if product.get('is_deal') else "border: 1px solid #ddd;"
-            
             products_html += f'''
-                <div style="{card_style} border-radius: 10px; padding: 20px; margin-bottom: 20px; background: white; position: relative; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                <div style="border: 1px solid #ddd; border-radius: 10px; padding: 20px; margin-bottom: 20px; background: white; position: relative; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
                     {badge}
-                    <h3 style="color: #1a73e8; margin-bottom: 12px; line-height: 1.4;">{title_display}</h3>
-                    <p style="font-size: 32px; color: {price_color}; font-weight: bold; margin: 12px 0;">{price}</p>
-                    <p style="color: #666; margin-bottom: 10px; font-weight: 500;">🏪 {source}</p>
-                    <div style="color: #888; font-size: 14px; margin-bottom: 15px;">
-                        {rating_html} {reviews_html} {" • " if rating_html and reviews_html else ""} ✅ Verificado
+                    <div style="position: absolute; top: 10px; left: 10px; background: #e3f2fd; color: #1565c0; padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: bold;">
+                        {source_indicator}
                     </div>
-                    <a href="{link}" target="_blank" style="background: {'#d32f2f' if product.get('is_deal') else '#1a73e8'}; color: white; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; display: inline-block; transition: all 0.3s;">
-                        {'🔥 COMPRAR OFERTA' if product.get('is_deal') else '🛒 Ver Producto'} en {source}
+                    <h3 style="color: #1a73e8; margin-bottom: 12px; margin-top: 25px;">{title}</h3>
+                    <p style="font-size: 32px; color: #2e7d32; font-weight: bold; margin: 12px 0;">{price}</p>
+                    <p style="color: #666; margin-bottom: 10px;">🏪 {source}</p>
+                    <div style="color: #888; font-size: 14px; margin-bottom: 15px;">
+                        {rating_html} {reviews_html} {" • " if rating_html and reviews_html else ""} ✅ Link directo verificado
+                    </div>
+                    <a href="{link}" target="_blank" rel="noopener noreferrer" style="background: #4caf50; color: white; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; display: inline-block;">
+                        🛒 IR AL PRODUCTO en {source}
                     </a>
                 </div>'''
         
-        # Calcular estadísticas con énfasis en ahorros
-        prices = [p.get('price_numeric', 0) for p in products if p and isinstance(p.get('price_numeric'), (int, float)) and p.get('price_numeric', 0) > 0]
-        deals_count = sum(1 for p in products if p and p.get('is_deal'))
+        # Estadísticas mejoradas
+        prices = [p.get('price_numeric', 0) for p in products if p and p.get('price_numeric', 0) > 0]
+        source_types = {}
+        for p in products:
+            if p:
+                source_type = p.get('source_type', 'api')
+                source_types[source_type] = source_types.get(source_type, 0) + 1
+        
+        sources_summary = " + ".join([f"{count} {stype.upper()}" for stype, count in source_types.items()])
         
         stats = ""
         if prices:
             min_price, max_price, avg_price = min(prices), max(prices), sum(prices) / len(prices)
-            savings = max_price - min_price
-            savings_percent = (savings / max_price * 100) if max_price > 0 else 0
             stats = f'''
-                <div style="background: linear-gradient(135deg, #fff3e0, #ffe0b2); border: 2px solid #ff9800; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
-                    <h3 style="color: #e65100; margin-bottom: 10px;">🔥 Análisis de ofertas encontradas</h3>
-                    <p><strong>💰 Precio más bajo encontrado:</strong> ${min_price:.2f}</p>
-                    <p><strong>🔥 Ofertas especiales:</strong> {deals_count} de {len(products)} productos</p>
+                <div style="background: linear-gradient(135deg, #e8f5e8, #c8e6c9); border: 2px solid #4caf50; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
+                    <h3 style="color: #2e7d32; margin-bottom: 10px;">🚀 Resultados ENHANCED encontrados</h3>
+                    <p><strong>🎯 {len(products)} productos de múltiples fuentes:</strong> {sources_summary}</p>
+                    <p><strong>💰 Precio más bajo:</strong> ${min_price:.2f}</p>
                     <p><strong>📊 Precio promedio:</strong> ${avg_price:.2f}</p>
-                    <p><strong>💸 Ahorro máximo posible:</strong> ${savings:.2f} ({savings_percent:.1f}%)</p>
-                    <p style="margin-top: 10px; font-weight: bold; color: #d32f2f;">¡Compra ahora y ahorra!</p>
+                    <p><strong>💸 Diferencia de precio:</strong> ${max_price - min_price:.2f}</p>
+                    <p><strong>🚀 Modo Enhanced:</strong> {"✅ ACTIVO" if enhanced_mode else "❌ Básico"}</p>
                 </div>'''
         
-        # CSS adicional para animaciones
-        animation_css = '''
-        <style>
-            @keyframes pulse {
-                0% { transform: scale(1); }
-                50% { transform: scale(1.05); }
-                100% { transform: scale(1); }
-            }
-        </style>'''
-        
         content = f'''
-        {animation_css}
         <div style="max-width: 900px; margin: 0 auto;">
-            <h1 style="color: white; text-align: center; margin-bottom: 10px;">🔥 Ofertas encontradas: "{query}"</h1>
-            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 30px;">💰 Ordenado por precio - Las mejores ofertas primero</p>
+            <h1 style="color: white; text-align: center; margin-bottom: 10px;">🚀 Resultados ENHANCED: "{query}"</h1>
+            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 30px;">✅ Múltiples fuentes + Links directos verificados</p>
             <div style="text-align: center; margin-bottom: 25px;">
-                <a href="/search" style="background: white; color: #1a73e8; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 0 10px;">🔍 Buscar Más Ofertas</a>
+                <a href="/search" style="background: white; color: #1a73e8; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600;">🔍 Nueva Búsqueda ENHANCED</a>
             </div>
             {stats}
             {products_html}
         </div>'''
         
-        return render_page('🔥 Ofertas - Price Finder USA', content)
-    except:
+        return render_page('🚀 Resultados ENHANCED - Price Finder USA', content)
+    except Exception as e:
+        print(f"Error en results_page: {e}")
         return redirect(url_for('search_page'))
 
 @app.route('/api/test')
 def test_endpoint():
     return jsonify({
         'status': 'SUCCESS',
-        'message': '🔥 Price Finder USA - Optimizado para Ofertas',
-        'version': '8.0 - Especialista en deals y precios bajos',
+        'message': '🚀 Price Finder USA - ENHANCED MODE',
+        'version': '10.0 - Múltiples fuentes + Scraping + APIs',
         'features': {
-            'deal_detection': True,
-            'clearance_search': True, 
-            'price_sorting': True,
-            'offer_prioritization': True
+            'enhanced_libraries': HAS_ENHANCED,
+            'google_shopping': True,
+            'bing_shopping': True,
+            'direct_scraping': HAS_ENHANCED,
+            'real_link_validation': True,
+            'multi_source_search': True,
+            'price_parser': HAS_ENHANCED,
+            'cloudscraper': HAS_ENHANCED
+        },
+        'libraries_status': {
+            'beautifulsoup4': HAS_ENHANCED,
+            'cloudscraper': HAS_ENHANCED,
+            'fake_useragent': HAS_ENHANCED,
+            'price_parser': HAS_ENHANCED
         }
     })
 
@@ -674,10 +964,16 @@ def test_endpoint():
 def health_check():
     return jsonify({
         'status': 'OK', 
-        'message': 'Sistema de ofertas funcionando',
+        'message': 'Sistema ENHANCED funcionando',
+        'enhanced_mode': HAS_ENHANCED,
         'timestamp': datetime.now().isoformat()
     })
 
 if __name__ == '__main__':
+    print("🚀 Iniciando Price Finder USA - ENHANCED MODE")
+    print(f"📊 Librerías mejoradas: {'✅ ACTIVAS' if HAS_ENHANCED else '❌ No instaladas'}")
+    if not HAS_ENHANCED:
+        print("💡 Para mejores resultados ejecuta: pip install beautifulsoup4 cloudscraper fake-useragent price-parser lxml")
+    
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
