@@ -4,6 +4,7 @@ import os
 import re
 import html
 from datetime import datetime
+from urllib.parse import urlparse, unquote
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -62,13 +63,98 @@ class PriceFinder:
         cleaned = html.escape(str(text))
         return cleaned[:100] + "..." if len(cleaned) > 100 else cleaned
     
+    def _extract_real_link(self, google_link):
+        """Extrae el link real de una URL de redirección de Google"""
+        if not google_link:
+            return ""
+        
+        # Si ya es un link directo (no de Google), devolverlo
+        if not any(domain in google_link.lower() for domain in ['google.com', 'googleadservices.com', 'googlesyndication.com']):
+            return google_link
+        
+        try:
+            # Buscar parámetros que contengan el URL real
+            if 'url=' in google_link:
+                # Extraer después de url=
+                url_part = google_link.split('url=')[1].split('&')[0]
+                real_url = unquote(url_part)
+                return real_url
+            
+            elif 'q=' in google_link:
+                # Extraer después de q=
+                url_part = google_link.split('q=')[1].split('&')[0]
+                real_url = unquote(url_part)
+                return real_url
+            
+            elif '/url?sa=' in google_link:
+                # Google redirect format
+                if '&url=' in google_link:
+                    url_part = google_link.split('&url=')[1].split('&')[0]
+                    real_url = unquote(url_part)
+                    return real_url
+            
+            # Si no se puede extraer, devolver el original
+            return google_link
+            
+        except Exception as e:
+            print(f"Error extrayendo link real: {e}")
+            return google_link
+    
+    def _get_best_link(self, item):
+        """Obtiene el mejor link disponible del producto"""
+        # Prioridad de links a verificar
+        link_fields = ['product_link', 'link']
+        
+        for field in link_fields:
+            if field in item:
+                raw_link = item[field]
+                if raw_link:
+                    # Extraer link real si es de Google
+                    clean_link = self._extract_real_link(raw_link)
+                    
+                    # Verificar que sea un link válido
+                    if self._is_valid_product_link(clean_link):
+                        return clean_link
+        
+        # Si no hay links válidos, devolver vacío
+        return ""
+    
+    def _is_valid_product_link(self, link):
+        """Verifica si un link es válido para un producto"""
+        if not link:
+            return False
+        
+        try:
+            parsed = urlparse(link)
+            
+            # Debe tener esquema y dominio
+            if not parsed.scheme or not parsed.netloc:
+                return False
+            
+            # No debe ser de Google (redirects)
+            google_domains = ['google.com', 'googleadservices.com', 'googlesyndication.com', 'googleads.g.doubleclick.net']
+            if any(domain in parsed.netloc.lower() for domain in google_domains):
+                return False
+            
+            # Filtrar dominios problemáticos
+            bad_domains = ['javascript:', 'mailto:', 'tel:', '#']
+            if any(bad in link.lower() for bad in bad_domains):
+                return False
+            
+            return True
+            
+        except Exception:
+            return False
+    
     def search_products(self, query):
         params = {
             'engine': 'google_shopping',
             'q': query,
             'api_key': self.api_key,
             'num': 20,
-            'location': 'United States'
+            'location': 'United States',
+            'gl': 'us',  # Geo location
+            'hl': 'en'   # Host language
         }
         
         try:
@@ -90,12 +176,18 @@ class PriceFinder:
                         price_num = self._extract_price(price_str)
                         
                         if price_num > 0:
-                            # Validar que sea de tienda de EE.UU. (básico)
+                            # Obtener el mejor link disponible
+                            product_link = self._get_best_link(item)
+                            
+                            # Solo incluir productos con links válidos
+                            if not product_link:
+                                print(f"Producto sin link válido: {item.get('title', 'Sin título')}")
+                                continue
+                            
                             source = item.get('source', 'Desconocido')
-                            link = item.get('link', '')
                             
                             # Filtrar dominios chinos básicos
-                            if any(domain in link.lower() for domain in ['alibaba', 'aliexpress', 'temu', 'wish']):
+                            if any(domain in product_link.lower() for domain in ['alibaba', 'aliexpress', 'temu', 'wish']):
                                 continue
                             
                             products.append({
@@ -103,9 +195,10 @@ class PriceFinder:
                                 'price': price_str,
                                 'price_numeric': price_num,
                                 'source': self._clean_text(source),
-                                'link': link,
+                                'link': product_link,
                                 'rating': item.get('rating', ''),
-                                'reviews': item.get('reviews', '')
+                                'reviews': item.get('reviews', ''),
+                                'image': item.get('thumbnail', '')
                             })
                     except Exception as e:
                         # Log error pero continúa con otros productos
@@ -564,6 +657,13 @@ def results_page():
             if product.get('reviews'):
                 reviews_html = f"📝 {product['reviews']} reseñas"
             
+            # Verificación adicional del link
+            link_status = "✅ Link verificado" if product.get('link') else "⚠️ Link no disponible"
+            
+            # Deshabilitar el botón si no hay link
+            button_disabled = "" if product.get('link') else "style='background: #ccc; cursor: not-allowed;' disabled"
+            button_text = f"🛒 Ver en {product['source']}" if product.get('link') else "❌ Link no disponible"
+            
             products_html += f'''
                 <div style="border: 1px solid #ddd; border-radius: 10px; padding: 20px; margin-bottom: 20px; background: white; position: relative; transition: box-shadow 0.3s; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
                     {badge}
@@ -573,10 +673,10 @@ def results_page():
                     <div style="color: #888; font-size: 14px; margin-bottom: 15px;">
                         {rating_html} {reviews_html}
                         {" • " if rating_html and reviews_html else ""}
-                        🇺🇸 Vendedor EE.UU.
+                        🇺🇸 Vendedor EE.UU. • {link_status}
                     </div>
-                    <a href="{product['link']}" target="_blank" style="background: #1a73e8; color: white; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; display: inline-block; transition: background 0.3s;">
-                        🛒 Ver en {product['source']}
+                    <a href="{product.get('link', '#')}" target="_blank" {button_disabled} style="background: #1a73e8; color: white; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; display: inline-block; transition: background 0.3s;">
+                        {button_text}
                     </a>
                 </div>
             '''
@@ -599,10 +699,12 @@ def results_page():
     if products:
         min_price = min(p['price_numeric'] for p in products)
         max_price = max(p['price_numeric'] for p in products)
+        valid_links = sum(1 for p in products if p.get('link'))
         price_stats = f'''
             <div style="background: #e8f5e8; border: 1px solid #4caf50; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
                 <h3 style="color: #2e7d32; margin-bottom: 10px;">📊 Resumen de búsqueda</h3>
                 <p><strong>{len(products)} productos encontrados</strong> de vendedores verificados de EE.UU.</p>
+                <p><strong>Links válidos:</strong> {valid_links}/{len(products)} productos</p>
                 <p><strong>Rango de precios:</strong> ${min_price:.2f} - ${max_price:.2f}</p>
                 <p><strong>Ahorro potencial:</strong> ${max_price - min_price:.2f} ({((max_price - min_price) / max_price * 100):.1f}%)</p>
             </div>
@@ -675,7 +777,7 @@ def test_endpoint():
         'status': 'SUCCESS',
         'message': '🇺🇸 Price Finder USA funcionando correctamente',
         'timestamp': datetime.now().isoformat(),
-        'version': '3.1 - Errores corregidos'
+        'version': '4.0 - Links corregidos'
     })
 
 @app.route('/api/health')
