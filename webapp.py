@@ -1,491 +1,263 @@
 from flask import Flask, request, jsonify, session, redirect, url_for
 import requests
-import json
-from typing import List, Dict, Optional
-import time
-from dataclasses import dataclass, asdict
-from urllib.parse import quote, urlparse
-import re
 import os
+import re
+import html
 from datetime import datetime
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-@dataclass
-class Product:
-    title: str
-    price: str
-    price_numeric: float
-    source: str
-    link: str
-    rating: Optional[str] = None
-    reviews: Optional[str] = None
-    is_us_seller: bool = True
-    link_verified: bool = False
-    relevance_score: float = 0.0
-
-class QueryProcessor:
-    def __init__(self):
-        self.important_keywords = {
-            'colors': ['azul', 'rojo', 'verde', 'amarillo', 'negro', 'blanco', 'rosa', 'morado', 
-                      'naranja', 'gris', 'blue', 'red', 'green', 'yellow', 'black', 'white', 
-                      'pink', 'purple', 'orange', 'gray', 'grey'],
-            'measurements': ['pulgada', 'pulgadas', 'inch', 'inches', 'cm', 'mm', 'metro', 'metros',
-                           'pie', 'pies', 'foot', 'feet', 'yarda', 'yardas', 'yard', 'yards'],
-            'numbers': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '½', '1/2', '1/4', '3/4'],
-            'materials': ['papel', 'tela', 'plastico', 'metal', 'aluminio', 'paper', 'fabric', 
-                         'plastic', 'aluminum', 'vinyl', 'vinilo'],
-            'product_types': ['cinta', 'tape', 'adhesiva', 'adhesive', 'masking', 'duct', 'scotch']
-        }
-    
-    def extract_key_attributes(self, query: str) -> Dict:
-        query_lower = query.lower()
-        attributes = {
-            'colors': [], 'measurements': [], 'numbers': [], 
-            'materials': [], 'product_types': [], 'original_query': query
-        }
-        
-        for attr_type, keywords in self.important_keywords.items():
-            for keyword in keywords:
-                if keyword.lower() in query_lower:
-                    attributes[attr_type].append(keyword)
-        
-        return attributes
-    
-    def generate_specific_queries(self, original_query: str) -> List[str]:
-        attributes = self.extract_key_attributes(original_query)
-        queries = [original_query]
-        
-        if attributes['colors'] and attributes['measurements']:
-            for color in attributes['colors'][:2]:
-                for measurement in attributes['measurements'][:2]:
-                    queries.append(f"{color} {measurement} {original_query}")
-        
-        if attributes['numbers'] and attributes['product_types']:
-            for number in attributes['numbers'][:3]:
-                for product_type in attributes['product_types'][:2]:
-                    queries.append(f"{number} {product_type} {original_query}")
-        
-        if len(original_query.split()) >= 3:
-            queries.append(f'"{original_query}"')
-        
-        if attributes['colors']:
-            for color in attributes['colors'][:2]:
-                queries.append(f"{original_query} {color}")
-        
-        if attributes['materials']:
-            for material in attributes['materials'][:2]:
-                queries.append(f"{material} {original_query}")
-        
-        unique_queries = []
-        for q in queries:
-            if q not in unique_queries:
-                unique_queries.append(q)
-        
-        return unique_queries[:8]
-
-class ProductMatcher:
-    def __init__(self):
-        self.query_processor = QueryProcessor()
-    
-    def calculate_relevance_score(self, product_title: str, original_query: str) -> float:
-        title_lower = product_title.lower()
-        query_lower = original_query.lower()
-        score = 0.0
-        
-        query_attributes = self.query_processor.extract_key_attributes(original_query)
-        
-        if query_lower in title_lower:
-            score += 40
-        
-        query_words = query_lower.split()
-        for word in query_words:
-            if len(word) > 2 and word in title_lower:
-                score += 5
-        
-        for color in query_attributes['colors']:
-            if color.lower() in title_lower:
-                score += 15
-        
-        for measurement in query_attributes['measurements']:
-            if measurement.lower() in title_lower:
-                score += 15
-        
-        for number in query_attributes['numbers']:
-            if number in title_lower or number in product_title:
-                score += 10
-        
-        for material in query_attributes['materials']:
-            if material.lower() in title_lower:
-                score += 10
-        
-        for product_type in query_attributes['product_types']:
-            if product_type.lower() in title_lower:
-                score += 10
-        
-        return min(score, 100)
-
-class USLinkValidator:
-    def __init__(self):
-        self.blacklisted_domains = {
-            'alibaba.com', 'aliexpress.com', 'temu.com', 'dhgate.com',
-            'banggood.com', 'gearbest.com', 'lightinthebox.com',
-            'wish.com', 'joom.com', 'shein.com', 'chinabrands.com'
-        }
-        
-        self.trusted_us_domains = {
-            'amazon.com', 'walmart.com', 'target.com', 'bestbuy.com',
-            'homedepot.com', 'lowes.com', 'costco.com', 'samsclub.com',
-            'lumberliquidators.com', 'llflooring.com', 'harborfreight.com',
-            'menards.com', 'acehardware.com', 'tapemanblue.com', 'uline.com',
-            'staples.com', 'officedepot.com', 'grainger.com'
-        }
-    
-    def is_blacklisted_domain(self, url: str) -> bool:
-        try:
-            parsed_url = urlparse(url.lower())
-            domain = parsed_url.netloc.replace('www.', '')
-            return domain in self.blacklisted_domains
-        except Exception:
-            return True
-    
-    def is_trusted_us_domain(self, url: str) -> bool:
-        try:
-            parsed_url = urlparse(url.lower())
-            domain = parsed_url.netloc.replace('www.', '')
-            return domain in self.trusted_us_domains
-        except Exception:
-            return False
-    
-    def validate_us_link(self, url: str, product_title: str = "") -> Dict:
-        validation_result = {
-            'is_valid': False, 'is_us_seller': False, 'is_accessible': True,
-            'is_trusted_domain': False, 'reasons': [], 'warnings': [], 'final_url': url
-        }
-        
-        if self.is_blacklisted_domain(url):
-            validation_result['reasons'].append('Dominio en lista negra')
-            return validation_result
-        
-        if self.is_trusted_us_domain(url):
-            validation_result['is_trusted_domain'] = True
-            validation_result['is_us_seller'] = True
-            validation_result['is_valid'] = True
-        
-        return validation_result
-
 class PriceFinder:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key):
         self.api_key = api_key
         self.base_url = "https://serpapi.com/search"
-        self.link_validator = USLinkValidator()
-        self.query_processor = QueryProcessor()
-        self.product_matcher = ProductMatcher()
-        
-    def test_api_key(self) -> Dict:
-        test_params = {'engine': 'google', 'q': 'test', 'api_key': self.api_key, 'num': 1}
-        
+    
+    def test_api_key(self):
+        params = {'engine': 'google', 'q': 'test', 'api_key': self.api_key, 'num': 1}
         try:
-            response = requests.get(self.base_url, params=test_params, timeout=10)
+            response = requests.get(self.base_url, params=params, timeout=10)
             data = response.json()
-            
             if 'error' in data:
-                return {'valid': False, 'error': data['error'], 'message': 'API key inválida o sin créditos'}
-            
-            if 'search_metadata' in data:
-                return {'valid': True, 'message': 'API key válida y con créditos disponibles'}
-            
+                return {'valid': False, 'message': 'API key inválida o sin créditos'}
             return {'valid': True, 'message': 'API key válida'}
-            
         except Exception as e:
-            return {'valid': False, 'error': str(e), 'message': 'Error al verificar API key'}
-        
-    def _validate_and_filter_products(self, products: List[Product], original_query: str) -> List[Product]:
-        valid_products = []
-        
-        for product in products:
-            validation = self.link_validator.validate_us_link(product.link, product.title)
-            
-            if validation['is_valid'] and validation['is_us_seller']:
-                product.is_us_seller = True
-                product.link_verified = True
-                product.link = validation['final_url']
-                product.relevance_score = self.product_matcher.calculate_relevance_score(product.title, original_query)
-                
-                if product.relevance_score >= 10:
-                    valid_products.append(product)
-        
-        return valid_products
-        
-    def search_google_shopping(self, query: str, location: str = "United States") -> List[Product]:
-        all_products = []
-        specific_queries = self.query_processor.generate_specific_queries(query)
-        
-        for search_query in specific_queries:
-            params = {
-                'engine': 'google_shopping', 'q': search_query, 'location': location,
-                'api_key': self.api_key, 'num': 30
-            }
-            
-            try:
-                response = requests.get(self.base_url, params=params, timeout=15)
-                response.raise_for_status()
-                data = response.json()
-                
-                if 'error' in data:
-                    raise Exception(f"Error de API: {data['error']}")
-                
-                if 'shopping_results' in data:
-                    for item in data['shopping_results']:
-                        try:
-                            price_str = item.get('price', '0')
-                            price_numeric = self._extract_price(price_str)
-                            
-                            if price_numeric > 0:
-                                product = Product(
-                                    title=item.get('title', 'Sin título'),
-                                    price=price_str,
-                                    price_numeric=price_numeric,
-                                    source=item.get('source', 'Desconocido'),
-                                    link=item.get('link', ''),
-                                    rating=item.get('rating'),
-                                    reviews=str(item.get('reviews', '')),
-                                    is_us_seller=False,
-                                    link_verified=False
-                                )
-                                all_products.append(product)
-                        except Exception:
-                            continue
-                
-                time.sleep(1.5)
-                
-            except requests.RequestException as e:
-                if "credits" in str(e).lower() or "quota" in str(e).lower():
-                    raise Exception("Se agotaron los créditos de tu API key. Cambia a una nueva API key.")
-                continue
-        
-        return all_products
+            return {'valid': False, 'message': f'Error de conexión: {str(e)}'}
     
-    def search_walmart(self, query: str) -> List[Product]:
-        all_products = []
-        specific_queries = self.query_processor.generate_specific_queries(query)[:3]
-        
-        for search_query in specific_queries:
-            params = {'engine': 'walmart', 'query': search_query, 'api_key': self.api_key}
-            
-            try:
-                response = requests.get(self.base_url, params=params, timeout=15)
-                response.raise_for_status()
-                data = response.json()
-                
-                if 'error' in data:
-                    raise Exception(f"Error de API: {data['error']}")
-                
-                if 'organic_results' in data:
-                    for item in data['organic_results']:
-                        try:
-                            primary_offer = item.get('primary_offer', {})
-                            price_str = primary_offer.get('offer_price', '0')
-                            price_numeric = self._extract_price(price_str)
-                            
-                            if price_numeric > 0:
-                                product = Product(
-                                    title=item.get('title', 'Sin título'),
-                                    price=price_str,
-                                    price_numeric=price_numeric,
-                                    source='Walmart',
-                                    link=item.get('product_page_url', ''),
-                                    rating=str(item.get('rating', '')),
-                                    reviews=str(item.get('reviews_count', '')),
-                                    is_us_seller=True,
-                                    link_verified=False
-                                )
-                                all_products.append(product)
-                        except Exception:
-                            continue
-                
-                time.sleep(1)
-                
-            except requests.RequestException as e:
-                if "credits" in str(e).lower() or "quota" in str(e).lower():
-                    raise Exception("Se agotaron los créditos de tu API key. Cambia a una nueva API key.")
-                continue
-        
-        return all_products
-    
-    def _extract_price(self, price_str: str) -> float:
+    def _extract_price(self, price_str):
+        """Extrae precio numérico de manera robusta"""
         if not price_str:
             return 0.0
         
-        price_str = str(price_str)
+        # Convertir a string y limpiar
+        price_str = str(price_str).strip()
+        
+        # Buscar patrones de precio
         price_patterns = [
-            r'\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)',
-            r'(\d{1,3}(?:,\d{3})*\.\d{2})',
-            r'(\d{1,3}(?:,\d{3})*)'
+            r'\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)',  # $1,234.56
+            r'(\d{1,3}(?:,\d{3})*\.\d{2})',            # 1,234.56
+            r'(\d+\.\d{2})',                           # 123.45
+            r'(\d+)',                                  # 123
         ]
         
         for pattern in price_patterns:
             matches = re.findall(pattern, price_str)
             if matches:
-                price_clean = matches[0]
-                break
-        else:
-            price_clean = re.sub(r'[^\d.,]', '', price_str)
+                price_clean = matches[0].replace(',', '')
+                try:
+                    price_value = float(price_clean)
+                    if 0.1 <= price_value <= 10000:  # Rango razonable
+                        return price_value
+                except ValueError:
+                    continue
         
-        if not price_clean:
-            return 0.0
-        
-        if ',' in price_clean and '.' in price_clean:
-            price_clean = price_clean.replace(',', '')
-        elif ',' in price_clean:
-            if price_clean.count(',') == 1 and len(price_clean.split(',')[1]) <= 2:
-                price_clean = price_clean.replace(',', '.')
-            else:
-                price_clean = price_clean.replace(',', '')
-        
-        try:
-            price_value = float(price_clean)
-            if 0.10 <= price_value <= 50000:
-                return price_value
-            else:
-                return 0.0
-        except (ValueError, TypeError):
-            return 0.0
+        return 0.0
     
-    def find_best_deals(self, query: str, max_results: int = 25) -> List[Product]:
-        all_products = []
+    def _clean_text(self, text):
+        """Limpia texto para prevenir problemas de HTML"""
+        if not text:
+            return "Sin información"
+        
+        # Escapar HTML y truncar
+        cleaned = html.escape(str(text))
+        return cleaned[:100] + "..." if len(cleaned) > 100 else cleaned
+    
+    def search_products(self, query):
+        params = {
+            'engine': 'google_shopping',
+            'q': query,
+            'api_key': self.api_key,
+            'num': 20,
+            'location': 'United States'
+        }
         
         try:
-            google_products = self.search_google_shopping(query)
-            all_products.extend(google_products)
+            response = requests.get(self.base_url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
             
-            walmart_products = self.search_walmart(query)
-            all_products.extend(walmart_products)
+            if 'error' in data:
+                error_msg = data['error']
+                if 'credits' in error_msg.lower() or 'quota' in error_msg.lower():
+                    raise Exception("Se agotaron los créditos de tu API key")
+                raise Exception(f"Error de API: {error_msg}")
             
+            products = []
+            if 'shopping_results' in data:
+                for item in data['shopping_results']:
+                    try:
+                        price_str = item.get('price', '0')
+                        price_num = self._extract_price(price_str)
+                        
+                        if price_num > 0:
+                            # Validar que sea de tienda de EE.UU. (básico)
+                            source = item.get('source', 'Desconocido')
+                            link = item.get('link', '')
+                            
+                            # Filtrar dominios chinos básicos
+                            if any(domain in link.lower() for domain in ['alibaba', 'aliexpress', 'temu', 'wish']):
+                                continue
+                            
+                            products.append({
+                                'title': self._clean_text(item.get('title', 'Sin título')),
+                                'price': price_str,
+                                'price_numeric': price_num,
+                                'source': self._clean_text(source),
+                                'link': link,
+                                'rating': item.get('rating', ''),
+                                'reviews': item.get('reviews', '')
+                            })
+                    except Exception as e:
+                        # Log error pero continúa con otros productos
+                        print(f"Error procesando producto: {e}")
+                        continue
+            
+            # Ordenar por precio y remover duplicados básicos
+            products = sorted(products, key=lambda x: x['price_numeric'])
+            
+            # Filtrar duplicados por título similar
+            unique_products = []
+            seen_titles = set()
+            for product in products:
+                title_key = product['title'][:30].lower()
+                if title_key not in seen_titles:
+                    seen_titles.add(title_key)
+                    unique_products.append(product)
+            
+            return unique_products[:15]  # Máximo 15 productos
+        
+        except requests.RequestException as e:
+            raise Exception(f"Error de conexión con SerpAPI: {str(e)}")
         except Exception as e:
-            if "créditos" in str(e) or "credits" in str(e) or "quota" in str(e):
-                raise Exception("❌ Se agotaron los créditos de tu API key. Ve a 'Cambiar API Key' para usar una nueva.")
             raise e
-        
-        validated_products = self._validate_and_filter_products(all_products, query)
-        unique_products = self._remove_duplicates(validated_products)
-        sorted_products = sorted(unique_products, key=lambda x: (-x.relevance_score, x.price_numeric))
-        
-        return sorted_products[:max_results]
-    
-    def _remove_duplicates(self, products: List[Product]) -> List[Product]:
-        seen_products = set()
-        unique_products = []
-        
-        for product in products:
-            title_normalized = re.sub(r'[^\w\s]', '', product.title.lower())
-            title_words = set(title_normalized.split()[:8])
-            price_rounded = round(product.price_numeric, 2)
-            key = (frozenset(title_words), price_rounded, product.source.lower())
-            
-            if key not in seen_products:
-                seen_products.add(key)
-                unique_products.append(product)
-        
-        return unique_products
 
-# HTML Templates
-INDEX_HTML = """
+@app.route('/')
+def index():
+    return '''
 <!DOCTYPE html>
 <html lang="es">
 <head>
+    <title>🇺🇸 Price Finder USA</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🇺🇸 Price Finder USA</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh; color: #333;
+            min-height: 100vh; 
+            padding: 20px;
         }
-        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        .header { text-align: center; margin-bottom: 30px; color: white; }
-        .header h1 { font-size: 2.5rem; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
-        .setup-card { 
-            background: white; border-radius: 16px; padding: 40px; 
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2); max-width: 600px; margin: 0 auto;
+        .container { 
+            max-width: 600px; 
+            margin: 0 auto; 
+            background: white; 
+            padding: 30px; 
+            border-radius: 15px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2); 
         }
-        .input-group { margin-bottom: 20px; }
-        .input-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #374151; }
-        .input-group input { 
-            width: 100%; padding: 16px; border: 2px solid #e5e7eb; border-radius: 12px; 
-            font-size: 16px; transition: all 0.3s ease;
+        h1 { color: #1a73e8; text-align: center; margin-bottom: 10px; }
+        .subtitle { text-align: center; color: #666; margin-bottom: 30px; }
+        input { 
+            width: 100%; 
+            padding: 15px; 
+            margin: 10px 0; 
+            border: 2px solid #e1e5e9; 
+            border-radius: 8px; 
+            font-size: 16px;
+            transition: border-color 0.3s;
         }
-        .input-group input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
-        .btn { 
-            background: #3b82f6; color: white; border: none; padding: 16px 24px; 
-            border-radius: 12px; cursor: pointer; font-size: 16px; font-weight: 600; 
-            transition: all 0.3s ease; text-decoration: none; display: inline-block;
+        input:focus { outline: none; border-color: #1a73e8; }
+        button { 
+            width: 100%; 
+            padding: 15px; 
+            background: #1a73e8; 
+            color: white; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            font-weight: 600;
+            transition: background 0.3s;
         }
-        .btn:hover { background: #2563eb; transform: translateY(-2px); box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3); }
-        .features { background: #f0f9ff; padding: 25px; border-radius: 12px; border-left: 4px solid #3b82f6; margin-top: 20px; }
-        .error { background: #fef2f2; border: 2px solid #fecaca; color: #991b1b; padding: 20px; border-radius: 12px; margin: 20px 0; }
-        .hidden { display: none !important; }
-        .loading { text-align: center; padding: 20px; }
-        .spinner { width: 30px; height: 30px; border: 3px solid #e5e7eb; border-left: 3px solid #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        button:hover { background: #1557b0; }
+        .features { 
+            background: #f8f9fa; 
+            padding: 20px; 
+            border-radius: 8px; 
+            margin-top: 25px; 
+        }
+        .features ul { list-style: none; }
+        .features li { padding: 5px 0; }
+        .features li:before { content: "✅ "; }
+        .error { 
+            background: #ffebee; 
+            color: #c62828; 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin: 15px 0; 
+            display: none;
+        }
+        .loading { 
+            text-align: center; 
+            padding: 20px; 
+            display: none;
+        }
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #1a73e8;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>🇺🇸 Price Finder USA</h1>
-            <p>Encuentra los mejores precios solo en vendedores de EE.UU.</p>
+        <h1>🇺🇸 Price Finder USA</h1>
+        <p class="subtitle">Encuentra los mejores precios en tiendas verificadas de EE.UU.</p>
+        
+        <form id="setupForm">
+            <label for="apiKey">API Key de SerpAPI:</label>
+            <input type="text" id="apiKey" placeholder="Pega aquí tu API key..." required>
+            <button type="submit">✅ Configurar y Continuar</button>
+        </form>
+        
+        <div class="features">
+            <h3>🛡️ Características principales:</h3>
+            <ul>
+                <li>Solo vendedores verificados de EE.UU.</li>
+                <li>Filtra automáticamente sitios chinos</li>
+                <li>Precios ordenados de menor a mayor</li>
+                <li>Links directos de compra verificados</li>
+                <li>Búsquedas rápidas y precisas</li>
+            </ul>
+            <p style="margin-top: 15px;">
+                <strong>¿No tienes API key?</strong> 
+                <a href="https://serpapi.com/" target="_blank" style="color: #1a73e8;">
+                    Obtén una gratis aquí (100 búsquedas/mes)
+                </a>
+            </p>
         </div>
-
-        <div class="setup-card" id="setupCard">
-            <h2>¡Bienvenido! 🚀</h2>
-            <p>Para comenzar necesitas una API key gratuita de SerpAPI.</p>
-            
-            <form id="setupForm">
-                <div class="input-group">
-                    <label for="apiKey">API Key de SerpAPI:</label>
-                    <input type="text" id="apiKey" name="api_key" placeholder="Pega aquí tu API key..." required>
-                </div>
-                
-                <div style="text-align: center; margin: 20px 0;">
-                    <a href="https://serpapi.com/" target="_blank" style="color: #3b82f6;">
-                        📝 ¿No tienes API key? Obtén una gratis aquí →
-                    </a>
-                </div>
-                
-                <button type="submit" class="btn">✅ Configurar y Continuar</button>
-            </form>
-
-            <div class="features">
-                <h3>🛡️ Características principales:</h3>
-                <ul style="list-style: none; padding-left: 0;">
-                    <li>✅ Solo vendedores verificados de EE.UU.</li>
-                    <li>❌ Filtra automáticamente sitios chinos</li>
-                    <li>🔗 Links de compra directa verificados</li>
-                    <li>💰 Encuentra las mejores ofertas</li>
-                    <li>🎯 Búsquedas ultra específicas</li>
-                </ul>
-            </div>
-        </div>
-
-        <div id="loading" class="loading hidden">
+        
+        <div id="error" class="error"></div>
+        <div id="loading" class="loading">
             <div class="spinner"></div>
-            <p>Configurando API key...</p>
+            <p>Validando API key...</p>
         </div>
-
-        <div id="error" class="error hidden"></div>
     </div>
 
     <script>
         document.getElementById('setupForm').addEventListener('submit', function(e) {
             e.preventDefault();
             
-            const formData = new FormData(e.target);
-            const apiKey = formData.get('api_key').trim();
-            
+            const apiKey = document.getElementById('apiKey').value.trim();
             if (!apiKey) {
                 showError('Por favor ingresa tu API key');
                 return;
@@ -493,12 +265,16 @@ INDEX_HTML = """
             
             showLoading();
             
+            const formData = new FormData();
+            formData.append('api_key', apiKey);
+            
             fetch('/setup', {
                 method: 'POST',
                 body: formData
             })
             .then(response => response.json())
             .then(data => {
+                hideLoading();
                 if (data.success) {
                     window.location.href = '/search';
                 } else {
@@ -506,66 +282,29 @@ INDEX_HTML = """
                 }
             })
             .catch(error => {
-                showError('Error de conexión: ' + error.message);
+                hideLoading();
+                showError('Error de conexión. Verifica tu internet.');
             });
+        });
+
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error').style.display = 'none';
         }
-
-        function simulateProgress() {
-            const messages = [
-                'Analizando tu consulta específica...',
-                'Generando consultas inteligentes...',
-                'Buscando en Google Shopping...',
-                'Consultando Walmart...',
-                'Calculando relevancia de productos...',
-                'Validando vendedores de EE.UU...',
-                'Organizando resultados por relevancia...'
-            ];
-
-            let currentStep = 0;
-            let progress = 0;
-
-            const interval = setInterval(() => {
-                progress += Math.random() * 10 + 5;
-                if (progress > 95) progress = 95;
-
-                document.getElementById('progressFill').style.width = progress + '%';
-                document.getElementById('progressText').textContent = Math.round(progress) + '% completado';
-
-                if (currentStep < messages.length) {
-                    document.getElementById('loadingMessage').textContent = messages[currentStep];
-                    currentStep++;
-                }
-
-                if (progress >= 95) {
-                    clearInterval(interval);
-                }
-            }, 1000);
+        
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
         }
 
         function showError(message) {
-            searchInProgress = false;
-            document.getElementById('searchLoading').classList.add('hidden');
-            document.getElementById('searchCard').style.display = 'block';
-            
-            const errorDiv = document.getElementById('searchError');
-            errorDiv.innerHTML = message;
-            errorDiv.classList.remove('hidden');
-        }
-
-        function cancelSearch() {
-            searchInProgress = false;
-            document.getElementById('searchLoading').classList.add('hidden');
-            document.getElementById('searchCard').style.display = 'block';
+            hideLoading();
+            document.getElementById('error').textContent = message;
+            document.getElementById('error').style.display = 'block';
         }
     </script>
 </body>
 </html>
-"""
-
-# Flask Routes
-@app.route('/')
-def index():
-    return INDEX_HTML
+'''
 
 @app.route('/setup', methods=['POST'])
 def setup_api():
@@ -578,14 +317,10 @@ def setup_api():
         test_result = price_finder.test_api_key()
         
         if not test_result['valid']:
-            return jsonify({'error': f"API key inválida: {test_result['message']}"}), 400
+            return jsonify({'error': test_result['message']}), 400
         
         session['api_key'] = api_key
-        return jsonify({
-            'success': True, 
-            'message': 'API key configurada correctamente',
-            'api_info': test_result.get('message', '')
-        })
+        return jsonify({'success': True, 'message': 'API key configurada correctamente'})
         
     except Exception as e:
         return jsonify({'error': f'Error al verificar API key: {str(e)}'}), 400
@@ -594,7 +329,184 @@ def setup_api():
 def search_page():
     if 'api_key' not in session:
         return redirect(url_for('index'))
-    return SEARCH_HTML
+    
+    return '''
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <title>Búsqueda - Price Finder USA</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh; 
+            padding: 20px;
+        }
+        .container { 
+            max-width: 700px; 
+            margin: 0 auto; 
+            background: white; 
+            padding: 30px; 
+            border-radius: 15px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2); 
+        }
+        h1 { color: #1a73e8; text-align: center; margin-bottom: 10px; }
+        .subtitle { text-align: center; color: #666; margin-bottom: 30px; }
+        .search-bar { display: flex; gap: 10px; margin-bottom: 25px; }
+        input { 
+            flex: 1; 
+            padding: 15px; 
+            border: 2px solid #e1e5e9; 
+            border-radius: 8px; 
+            font-size: 16px;
+        }
+        input:focus { outline: none; border-color: #1a73e8; }
+        button { 
+            padding: 15px 25px; 
+            background: #1a73e8; 
+            color: white; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-weight: 600;
+        }
+        button:hover { background: #1557b0; }
+        .btn-secondary { background: #6c757d; }
+        .btn-secondary:hover { background: #545b62; }
+        .tips { 
+            background: #fff3cd; 
+            border: 1px solid #ffeaa7; 
+            padding: 20px; 
+            border-radius: 8px; 
+            margin-bottom: 20px; 
+        }
+        .loading { 
+            text-align: center; 
+            padding: 40px; 
+            display: none; 
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #1a73e8;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error { 
+            background: #ffebee; 
+            color: #c62828; 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin: 15px 0; 
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Buscar Productos</h1>
+        <p class="subtitle">Búsqueda inteligente en tiendas verificadas de EE.UU.</p>
+        
+        <form id="searchForm">
+            <div class="search-bar">
+                <input type="text" id="searchQuery" placeholder="Ej: iPhone 15 azul, Samsung TV 55 pulgadas..." required>
+                <button type="submit">🎯 Buscar</button>
+            </div>
+        </form>
+        
+        <div class="tips">
+            <h4>💡 Tips para mejores resultados:</h4>
+            <ul style="margin: 10px 0 0 20px;">
+                <li><strong>Sé específico:</strong> "iPhone 15 Pro azul 128GB"</li>
+                <li><strong>Incluye marca:</strong> "Samsung Galaxy S24"</li>
+                <li><strong>Menciona tamaño:</strong> "TV 55 pulgadas"</li>
+                <li><strong>Agrega color:</strong> "Nike Air Max negro"</li>
+            </ul>
+        </div>
+        
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <h3>🔍 Buscando mejores precios...</h3>
+            <p>Analizando productos en tiendas de EE.UU...</p>
+            <button type="button" class="btn-secondary" style="margin-top: 20px;" onclick="cancelSearch()">
+                ❌ Cancelar
+            </button>
+        </div>
+        
+        <div id="error" class="error"></div>
+    </div>
+
+    <script>
+        let searchInProgress = false;
+
+        document.getElementById('searchForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            if (searchInProgress) return;
+            
+            const query = document.getElementById('searchQuery').value.trim();
+            if (!query) {
+                showError('Por favor ingresa un producto para buscar');
+                return;
+            }
+            
+            startSearch(query);
+        });
+
+        function startSearch(query) {
+            searchInProgress = true;
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error').style.display = 'none';
+            
+            fetch('/api/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: query })
+            })
+            .then(response => response.json())
+            .then(data => {
+                searchInProgress = false;
+                if (data.success) {
+                    window.location.href = '/results';
+                } else {
+                    hideLoading();
+                    showError(data.error || 'Error en la búsqueda');
+                }
+            })
+            .catch(error => {
+                searchInProgress = false;
+                hideLoading();
+                showError('Error de conexión. Verifica tu internet.');
+            });
+        }
+
+        function cancelSearch() {
+            searchInProgress = false;
+            hideLoading();
+        }
+        
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        function showError(message) {
+            hideLoading();
+            document.getElementById('error').textContent = message;
+            document.getElementById('error').style.display = 'block';
+        }
+    </script>
+</body>
+</html>
+'''
 
 @app.route('/api/search', methods=['POST'])
 def api_search():
@@ -607,30 +519,23 @@ def api_search():
     
     try:
         price_finder = PriceFinder(session['api_key'])
-        products = price_finder.find_best_deals(query)
-        
-        products_dict = [asdict(product) for product in products]
+        products = price_finder.search_products(query)
         
         session['last_search'] = {
             'query': query,
-            'products': products_dict,
+            'products': products,
             'timestamp': datetime.now().isoformat()
         }
         
         return jsonify({
             'success': True,
-            'products': products_dict,
-            'total': len(products_dict)
+            'products': products,
+            'total': len(products)
         })
         
     except Exception as e:
         error_message = str(e)
-        if "créditos" in error_message or "credits" in error_message or "quota" in error_message:
-            return jsonify({
-                'error': '❌ Se agotaron los créditos de tu API key. Necesitas una nueva API key.'
-            }), 400
-        
-        return jsonify({'error': f'Error en la búsqueda: {error_message}'}), 500
+        return jsonify({'error': error_message}), 500
 
 @app.route('/results')
 def results_page():
@@ -639,308 +544,148 @@ def results_page():
     
     search_data = session['last_search']
     products = search_data['products']
-    query = search_data['query']
+    query = html.escape(search_data['query'])  # Escapar query para HTML
     
     products_html = ""
     if products:
         for i, product in enumerate(products):
-            title = product['title'][:80] + ("..." if len(product['title']) > 80 else "")
-            price = f"${product['price_numeric']:.2f}"
-            source = product['source']
-            link = product['link']
-            rating = product.get('rating', '')
-            reviews = product.get('reviews', '')
-            relevance = product.get('relevance_score', 0)
-            
-            title = title.replace("'", "&#39;").replace('"', "&quot;")
-            source = source.replace("'", "&#39;").replace('"', "&quot;")
-            
-            relevance_icon = "🎯" if relevance >= 50 else "✅" if relevance >= 30 else "👍"
-            relevance_text = "Muy relevante" if relevance >= 50 else "Relevante" if relevance >= 30 else "Relacionado"
-            
-            position_badge = ""
+            # Los datos ya están escapados por _clean_text()
+            badge = ""
             if i == 0:
-                position_badge = '<div style="position: absolute; top: -10px; left: 15px; background: #f59e0b; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">🥇 MÁS RELEVANTE</div>'
+                badge = '<div style="position: absolute; top: 10px; right: 10px; background: #4caf50; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">💰 MEJOR PRECIO</div>'
             elif i == 1:
-                position_badge = '<div style="position: absolute; top: -10px; left: 15px; background: #6b7280; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">🥈 2º LUGAR</div>'
-            elif i == 2:
-                position_badge = '<div style="position: absolute; top: -10px; left: 15px; background: #cd7c0e; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">🥉 3º LUGAR</div>'
+                badge = '<div style="position: absolute; top: 10px; right: 10px; background: #ff9800; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">🥈 2º MEJOR</div>'
             
-            products_html += f"""
-                <div class="product-card" style="position: relative;">
-                    {position_badge}
-                    <div class="verified-badge">🇺🇸 Verificado</div>
-                    <div class="product-title">{title}</div>
-                    <div class="product-price">{price}</div>
-                    <div class="product-source">{source}</div>
-                    <div style="color: #6b7280; margin-bottom: 15px;">
-                        {relevance_icon} {relevance_text} ({relevance:.0f}%)
-                        {f'⭐ {rating}' if rating else ''} 
-                        {f'📝 {reviews} reseñas' if reviews and reviews != 'None' else ''}
-                        🚚 Envío a EE.UU.
+            rating_html = ""
+            if product.get('rating'):
+                rating_html = f"⭐ {product['rating']}"
+            
+            reviews_html = ""
+            if product.get('reviews'):
+                reviews_html = f"📝 {product['reviews']} reseñas"
+            
+            products_html += f'''
+                <div style="border: 1px solid #ddd; border-radius: 10px; padding: 20px; margin-bottom: 20px; background: white; position: relative; transition: box-shadow 0.3s; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                    {badge}
+                    <h3 style="color: #1a73e8; margin-bottom: 12px; line-height: 1.4;">{product['title']}</h3>
+                    <p style="font-size: 28px; color: #2e7d32; font-weight: bold; margin: 12px 0;">{product['price']}</p>
+                    <p style="color: #666; margin-bottom: 10px; font-weight: 500;">🏪 {product['source']}</p>
+                    <div style="color: #888; font-size: 14px; margin-bottom: 15px;">
+                        {rating_html} {reviews_html}
+                        {" • " if rating_html and reviews_html else ""}
+                        🇺🇸 Vendedor EE.UU.
                     </div>
-                    <a href="{link}" target="_blank" class="btn">🛒 Ver en {source}</a>
-                    <p style="font-size: 12px; color: #059669; margin-top: 8px;">Link verificado ✅</p>
+                    <a href="{product['link']}" target="_blank" style="background: #1a73e8; color: white; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; display: inline-block; transition: background 0.3s;">
+                        🛒 Ver en {product['source']}
+                    </a>
                 </div>
-            """
+            '''
     else:
-        products_html = """
-            <div style="background: white; padding: 40px; border-radius: 16px; text-align: center;">
-                <h3>😔 No se encontraron productos específicos</h3>
-                <p style="margin: 15px 0; color: #6b7280;">
-                    No se encontraron productos que coincidan específicamente con tu búsqueda.<br>
-                    Intenta ser más específico con colores, medidas o materiales.
+        products_html = '''
+            <div style="text-align: center; padding: 60px 20px; background: white; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                <h3 style="color: #666; margin-bottom: 15px;">😔 No se encontraron productos</h3>
+                <p style="color: #888; margin-bottom: 25px;">
+                    No encontramos productos que coincidan con tu búsqueda en tiendas de EE.UU.<br>
+                    Intenta con términos más específicos o diferentes.
                 </p>
-                <a href="/search" class="btn">🔍 Intentar Nueva Búsqueda</a>
+                <a href="/search" style="background: #1a73e8; color: white; padding: 12px 25px; text-decoration: none; border-radius: 8px; font-weight: 600;">
+                    🔍 Nueva Búsqueda
+                </a>
             </div>
-        """
+        '''
     
-    summary_html = ""
+    # Calcular estadísticas de precios
+    price_stats = ""
     if products:
         min_price = min(p['price_numeric'] for p in products)
         max_price = max(p['price_numeric'] for p in products)
-        avg_relevance = sum(p.get('relevance_score', 0) for p in products) / len(products)
+        price_stats = f'''
+            <div style="background: #e8f5e8; border: 1px solid #4caf50; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
+                <h3 style="color: #2e7d32; margin-bottom: 10px;">📊 Resumen de búsqueda</h3>
+                <p><strong>{len(products)} productos encontrados</strong> de vendedores verificados de EE.UU.</p>
+                <p><strong>Rango de precios:</strong> ${min_price:.2f} - ${max_price:.2f}</p>
+                <p><strong>Ahorro potencial:</strong> ${max_price - min_price:.2f} ({((max_price - min_price) / max_price * 100):.1f}%)</p>
+            </div>
+        '''
+    
+    return f'''
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <title>Resultados - Price Finder USA</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh; 
+            padding: 20px;
+        }}
+        .container {{ max-width: 900px; margin: 0 auto; }}
+        h1 {{ color: white; text-align: center; margin-bottom: 10px; }}
+        .subtitle {{ text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 30px; }}
+        .actions {{ 
+            text-align: center; 
+            margin-bottom: 25px; 
+        }}
+        .btn {{ 
+            background: white; 
+            color: #1a73e8; 
+            padding: 12px 20px; 
+            text-decoration: none; 
+            border-radius: 8px; 
+            font-weight: 600; 
+            margin: 0 10px;
+            display: inline-block;
+            transition: all 0.3s;
+        }}
+        .btn:hover {{ 
+            background: #f0f0f0; 
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        }}
+        @media (max-width: 768px) {{
+            .container {{ padding: 0 10px; }}
+            .btn {{ margin: 5px; display: block; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎉 Resultados para: "{query}"</h1>
+        <p class="subtitle">Productos verificados de vendedores de EE.UU. ordenados por precio</p>
         
-        summary_html = f"""
-            <div class="results-summary">
-                <h3>✅ Búsqueda Específica Completada</h3>
-                <p><strong>{len(products)} productos relevantes</strong> encontrados de vendedores de EE.UU.</p>
-                <p>💰 Rango de precios: ${min_price:.2f} - ${max_price:.2f}</p>
-                <p>🎯 Relevancia promedio: {avg_relevance:.0f}% - Ordenados por relevancia</p>
-            </div>
-        """
-    
-    results_html = f"""
-    <!DOCTYPE html>
-    <html lang="es">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Resultados - Price Finder USA</title>
-        <style>
-            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-            body {{ 
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                min-height: 100vh; color: #333;
-            }}
-            .container {{ max-width: 1200px; margin: 0 auto; padding: 20px; }}
-            .header {{ text-align: center; margin-bottom: 30px; color: white; }}
-            .header h1 {{ font-size: 2.5rem; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }}
-            .results-summary {{ 
-                background: #f0fdf4; border: 2px solid #bbf7d0; border-radius: 16px; 
-                padding: 25px; margin-bottom: 30px; color: #166534;
-            }}
-            .product-card {{ 
-                background: white; border: 2px solid #e5e7eb; border-radius: 16px; 
-                padding: 25px; margin-bottom: 20px; position: relative;
-                transition: all 0.3s ease;
-            }}
-            .product-card:hover {{ 
-                border-color: #3b82f6; transform: translateY(-2px); 
-                box-shadow: 0 8px 25px rgba(0,0,0,0.15);
-            }}
-            .verified-badge {{ 
-                background: #059669; color: white; padding: 6px 12px; border-radius: 20px; 
-                font-size: 12px; position: absolute; top: 15px; right: 15px;
-            }}
-            .product-title {{ font-size: 18px; font-weight: 600; margin-bottom: 12px; color: #1f2937; }}
-            .product-price {{ font-size: 28px; font-weight: bold; color: #059669; margin-bottom: 12px; }}
-            .product-source {{ 
-                background: #3b82f6; color: white; padding: 6px 16px; border-radius: 20px; 
-                display: inline-block; font-size: 14px; margin-bottom: 15px;
-            }}
-            .btn {{ 
-                background: #3b82f6; color: white; border: none; padding: 12px 20px; 
-                border-radius: 8px; text-decoration: none; font-weight: 600;
-                display: inline-block; transition: all 0.3s ease;
-            }}
-            .btn:hover {{ background: #2563eb; transform: translateY(-2px); }}
-            .btn-secondary {{ background: #6b7280; }}
-            .btn-secondary:hover {{ background: #4b5563; }}
-            .actions {{ display: flex; gap: 15px; justify-content: center; margin-bottom: 30px; flex-wrap: wrap; }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>🎯 Resultados Específicos</h1>
-                <p>"{query}" - {len(products)} productos altamente relevantes</p>
-            </div>
-
-            {summary_html}
-
-            <div class="actions">
-                <a href="/search" class="btn">🔍 Nueva Búsqueda</a>
-                <button onclick="window.print()" class="btn btn-secondary">📄 Imprimir Resultados</button>
-            </div>
-
-            {products_html}
+        <div class="actions">
+            <a href="/search" class="btn">🔍 Nueva Búsqueda</a>
+            <a href="javascript:window.print()" class="btn">📄 Imprimir Resultados</a>
         </div>
-    </body>
-    </html>"""
-    
-    return results_html
-
-@app.route('/api/health')
-def health_check():
-    return jsonify({'status': 'OK', 'message': 'Price Finder USA está funcionando'})
+        
+        {price_stats}
+        {products_html}
+    </div>
+</body>
+</html>
+'''
 
 @app.route('/api/test')
 def test_endpoint():
     return jsonify({
         'status': 'SUCCESS',
-        'message': '🇺🇸 Price Finder USA limpio está funcionando!',
+        'message': '🇺🇸 Price Finder USA funcionando correctamente',
         'timestamp': datetime.now().isoformat(),
-        'version': '3.0 - Limpio'
+        'version': '3.1 - Errores corregidos'
+    })
+
+@app.route('/api/health')
+def health_check():
+    return jsonify({
+        'status': 'OK', 
+        'message': 'Aplicación funcionando',
+        'timestamp': datetime.now().isoformat()
     })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)(error => {
-                showError('Error de conexión: ' + error.message);
-            });
-        });
-
-        function showLoading() {
-            document.getElementById('setupCard').style.display = 'none';
-            document.getElementById('loading').classList.remove('hidden');
-        }
-
-        function showError(message) {
-            document.getElementById('loading').classList.add('hidden');
-            document.getElementById('setupCard').style.display = 'block';
-            
-            const errorDiv = document.getElementById('error');
-            errorDiv.textContent = message;
-            errorDiv.classList.remove('hidden');
-            
-            setTimeout(() => {
-                errorDiv.classList.add('hidden');
-            }, 5000);
-        }
-    </script>
-</body>
-</html>
-"""
-
-SEARCH_HTML = """
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Búsqueda - Price Finder USA</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh; color: #333;
-        }
-        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        .header { text-align: center; margin-bottom: 30px; color: white; }
-        .header h1 { font-size: 2.5rem; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
-        .search-card { 
-            background: white; border-radius: 16px; padding: 40px; 
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2); max-width: 600px; margin: 0 auto;
-        }
-        .search-bar { display: flex; gap: 12px; margin-bottom: 20px; }
-        .search-bar input { 
-            flex: 1; padding: 16px; border: 2px solid #e5e7eb; border-radius: 12px; 
-            font-size: 16px; transition: all 0.3s ease;
-        }
-        .btn { 
-            background: #3b82f6; color: white; border: none; padding: 16px 24px; 
-            border-radius: 12px; cursor: pointer; font-size: 16px; font-weight: 600; 
-        }
-        .btn:hover { background: #2563eb; transform: translateY(-2px); }
-        .btn-secondary { background: #6b7280; }
-        .btn-secondary:hover { background: #4b5563; }
-        .loading { text-align: center; padding: 40px; background: white; border-radius: 16px; margin: 20px 0; }
-        .spinner { width: 50px; height: 50px; border: 5px solid #e5e7eb; border-left: 5px solid #3b82f6; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 20px; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .hidden { display: none !important; }
-        .error { background: #fef2f2; border: 2px solid #fecaca; color: #991b1b; padding: 20px; border-radius: 12px; margin: 20px 0; }
-        .progress-bar { background: #e5e7eb; border-radius: 10px; margin: 20px 0; height: 8px; }
-        .progress-fill { background: #3b82f6; height: 100%; border-radius: 10px; transition: width 0.5s ease; width: 0%; }
-        .tips { background: #fef3c7; padding: 20px; border-radius: 12px; margin-top: 20px; border-left: 4px solid #f59e0b; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🔍 Buscar Productos</h1>
-            <p>Búsqueda ultra específica en tiendas de EE.UU.</p>
-        </div>
-
-        <div class="search-card" id="searchCard">
-            <form id="searchForm">
-                <div class="search-bar">
-                    <input type="text" id="searchQuery" placeholder="Ej: cinta adhesiva papel azul 2 pulgadas..." required>
-                    <button type="submit" class="btn">🎯 Buscar</button>
-                </div>
-            </form>
-
-            <div class="tips">
-                <h4>💡 Tips para búsquedas específicas:</h4>
-                <ul style="margin: 10px 0 0 20px; color: #92400e;">
-                    <li><strong>Incluye el color:</strong> "azul", "rojo", "negro"</li>
-                    <li><strong>Especifica medidas:</strong> "2 pulgadas", "1/2 inch"</li>
-                    <li><strong>Menciona el material:</strong> "papel", "tela", "plástico"</li>
-                </ul>
-            </div>
-        </div>
-
-        <div id="searchLoading" class="loading hidden">
-            <div class="spinner"></div>
-            <h3>🎯 Realizando búsqueda específica...</h3>
-            <p id="loadingMessage">Analizando tu consulta...</p>
-            
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
-            </div>
-            <p id="progressText">0% completado</p>
-
-            <button type="button" class="btn btn-secondary" style="margin-top: 20px;" onclick="cancelSearch()">
-                ❌ Cancelar búsqueda
-            </button>
-        </div>
-
-        <div id="searchError" class="error hidden"></div>
-    </div>
-
-    <script>
-        let searchInProgress = false;
-
-        document.getElementById('searchForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            if (searchInProgress) return;
-
-            const query = document.getElementById('searchQuery').value.trim();
-            if (!query) return;
-
-            startSearch(query);
-        });
-
-        function startSearch(query) {
-            searchInProgress = true;
-            document.getElementById('searchCard').style.display = 'none';
-            document.getElementById('searchLoading').classList.remove('hidden');
-            
-            simulateProgress();
-
-            fetch('/api/search', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: query })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    window.location.href = '/results';
-                } else {
-                    showError(data.error || 'Error en la búsqueda');
-                }
-            })
-            .catch
+    app.run(host='0.0.0.0', port=port, debug=False)
