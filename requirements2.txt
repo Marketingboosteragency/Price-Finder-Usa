@@ -1,8 +1,14 @@
+# Dependencias básicas
 Flask==2.3.3
 requests==2.31.0
 gunicorn==21.2.0
+
+# Librerías mejoradas (opcionales)
 beautifulsoup4==4.12.2
 cloudscraper==1.2.71
 fake-useragent==1.4.0
 price-parser==0.3.4
 lxml==4.9.3
+
+# Para variables de entorno
+python-dotenv==1.0.0
