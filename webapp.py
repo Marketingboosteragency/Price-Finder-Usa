@@ -453,36 +453,7 @@ def index():
     if not firebase_auth.is_user_logged_in():
         return redirect(url_for('auth_login_page'))
     
-    current_user = firebase_auth.get_current_user()
-    user_name = current_user['user_name'] if current_user else 'Usuario'
-    user_name_escaped = html.escape(user_name)
-    
-    # Verificar si la API está configurada
-    if not price_finder.is_api_configured():
-        content = '''
-        <div class="container">
-            <div class="user-info">Hola, <strong>''' + user_name_escaped + '''</strong>! | <a href="''' + url_for('auth_logout') + '''">Cerrar Sesión</a></div>
-            
-            <h1>Price Finder USA</h1>
-            <p class="subtitle">Sistema de búsqueda de productos</p>
-            
-            <div class="warning">
-                <h3>⚠️ Servicio no disponible</h3>
-                <p>La API de SerpAPI no está configurada en el servidor. Contacta al administrador.</p>
-            </div>
-            
-            <div class="features">
-                <h3>Variables de entorno requeridas:</h3>
-                <ul>
-                    <li><strong>SERPAPI_KEY:</strong> Tu clave de API de SerpAPI</li>
-                    <li><strong>FIREBASE_WEB_API_KEY:</strong> Clave de Firebase Auth</li>
-                    <li><strong>SECRET_KEY:</strong> Clave secreta de Flask</li>
-                </ul>
-            </div>
-        </div>'''
-        return render_template_string(render_page('Error - Price Finder USA', content))
-    
-    # Si la API está configurada, ir directamente a la búsqueda
+    # Ir directamente a la búsqueda sin verificar API
     return redirect(url_for('search_page'))
 
 @app.route('/search')
