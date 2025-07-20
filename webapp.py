@@ -210,7 +210,7 @@ def validate_image(image_content):
         image = Image.open(io.BytesIO(image_content))
         if image.size[0] < 10 or image.size[1] < 10:
             return False
-        if image.format not in ['JPEG', 'PNG', 'GIF', 'BMP', 'WEBP']:
+        if image.format not in ['JPEG', 'PNG', 'WEBP']:
             return False
         return True
     except:
@@ -638,7 +638,7 @@ def search_page():
             
             ''' + ('<div class="or-divider"><span>O sube una imagen</span></div>' if image_search_available else '') + '''
             
-            ''' + ('<div class="image-upload" id="imageUpload"><input type="file" id="imageFile" name="image_file" accept="image/*"><label for="imageFile">📷 Buscar por imagen<br><small>JPG, PNG, GIF hasta 10MB</small></label><img id="imagePreview" class="image-preview" src="#" alt="Vista previa"></div>' if image_search_available else '') + '''
+            ''' + ('<div class="image-upload" id="imageUpload"><input type="file" id="imageFile" name="image_file" accept="image/*"><label for="imageFile">📷 Buscar por imagen<br><small>JPG o PNG hasta 10MB</small></label><img id="imagePreview" class="image-preview" src="#" alt="Vista previa"></div>' if image_search_available else '') + '''
         </form>
         
         <div class="tips">
