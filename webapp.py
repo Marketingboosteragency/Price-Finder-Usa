@@ -38,7 +38,7 @@ class FirebaseAuth:
             
             return {
                 'success': True,
-                'message': '¡Bienvenido! Has iniciado sesión correctamente.',
+                'message': 'Bienvenido! Has iniciado sesion correctamente.',
                 'user_data': {
                     'user_id': user_data['localId'],
                     'email': user_data['email'],
@@ -55,9 +55,9 @@ class FirebaseAuth:
                 elif 'TOO_MANY_ATTEMPTS' in error_msg:
                     return {'success': False, 'message': 'Demasiados intentos fallidos', 'user_data': None, 'error_code': 'TOO_MANY_ATTEMPTS'}
                 else:
-                    return {'success': False, 'message': 'Error de autenticación', 'user_data': None, 'error_code': 'FIREBASE_ERROR'}
+                    return {'success': False, 'message': 'Error de autenticacion', 'user_data': None, 'error_code': 'FIREBASE_ERROR'}
             except:
-                return {'success': False, 'message': 'Error de conexión', 'user_data': None, 'error_code': 'CONNECTION_ERROR'}
+                return {'success': False, 'message': 'Error de conexion', 'user_data': None, 'error_code': 'CONNECTION_ERROR'}
         except Exception as e:
             print(f"Firebase auth error: {e}")
             return {'success': False, 'message': 'Error interno del servidor', 'user_data': None, 'error_code': 'UNEXPECTED_ERROR'}
@@ -83,7 +83,7 @@ class FirebaseAuth:
             try:
                 login_time = datetime.fromisoformat(session['login_time'])
                 time_diff = (datetime.now() - login_time).total_seconds()
-                if time_diff > 7200:  # 2 horas máximo
+                if time_diff > 7200:  # 2 horas maximo
                     return False
             except:
                 pass
@@ -105,7 +105,7 @@ def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not firebase_auth.is_user_logged_in():
-            flash('Tu sesión ha expirado. Inicia sesión nuevamente.', 'warning')
+            flash('Tu sesion ha expirado. Inicia sesion nuevamente.', 'warning')
             return redirect(url_for('auth_login_page'))
         return f(*args, **kwargs)
     return decorated_function
@@ -113,7 +113,7 @@ def login_required(f):
 # Price Finder Class - MODIFICADO para usar variable de entorno con fallbacks
 class PriceFinder:
     def __init__(self):
-        # Intentar múltiples nombres de variables de entorno comunes
+        # Intentar multiples nombres de variables de entorno comunes
         self.api_key = (
             os.environ.get('SERPAPI_KEY') or 
             os.environ.get('SERPAPI_API_KEY') or 
@@ -129,7 +129,7 @@ class PriceFinder:
         self.blacklisted_stores = ['alibaba', 'aliexpress', 'temu', 'wish', 'banggood', 'dhgate', 'falabella', 'ripley', 'linio', 'mercadolibre']
         
         if not self.api_key:
-            print("WARNING: No se encontró API key en variables de entorno")
+            print("WARNING: No se encontro API key en variables de entorno")
             print("Variables verificadas: SERPAPI_KEY, SERPAPI_API_KEY, SERP_API_KEY, serpapi_key, SERPAPI")
         else:
             print(f"SUCCESS: SerpAPI configurado correctamente (key: {self.api_key[:8]}...)")
@@ -145,13 +145,13 @@ class PriceFinder:
             params = {'engine': 'google', 'q': 'test', 'api_key': self.api_key, 'num': 1}
             response = requests.get(self.base_url, params=params, timeout=(self.timeouts['connect'], self.timeouts['read']))
             if response.status_code != 200:
-                return {'valid': False, 'message': 'API key inválida'}
+                return {'valid': False, 'message': 'API key invalida'}
             data = response.json()
             if 'error' in data:
-                return {'valid': False, 'message': 'API key sin créditos'}
-            return {'valid': True, 'message': 'API key válida'}
+                return {'valid': False, 'message': 'API key sin creditos'}
+            return {'valid': True, 'message': 'API key valida'}
         except:
-            return {'valid': False, 'message': 'Error de conexión'}
+            return {'valid': False, 'message': 'Error de conexion'}
     
     def _extract_price(self, price_str):
         if not price_str:
@@ -177,7 +177,7 @@ class PriceFinder:
     
     def _clean_text(self, text):
         if not text:
-            return "Sin información"
+            return "Sin informacion"
         return html.escape(str(text)[:120])
     
     def _is_blacklisted_store(self, source):
@@ -368,7 +368,7 @@ AUTH_LOGIN_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Iniciar Sesión | Price Finder USA</title>
+    <title>Iniciar Sesion | Price Finder USA</title>
     <style>
         body { font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #4A90E2 0%, #50E3C2 100%); min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
         .auth-container { max-width: 420px; width: 100%; background: white; border-radius: 15px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); overflow: hidden; }
@@ -394,7 +394,7 @@ AUTH_LOGIN_TEMPLATE = """
     <div class="auth-container">
         <div class="form-header">
             <h1>Price Finder USA</h1>
-            <p>Iniciar Sesión</p>
+            <p>Iniciar Sesion</p>
         </div>
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
@@ -408,7 +408,7 @@ AUTH_LOGIN_TEMPLATE = """
         <div class="form-body">
             <form action="{{ url_for('auth_login') }}" method="post">
                 <div class="input-group">
-                    <label for="email">Correo Electrónico</label>
+                    <label for="email">Correo Electronico</label>
                     <input type="email" name="email" id="email" required>
                 </div>
                 <div class="input-group">
@@ -453,7 +453,7 @@ def auth_login():
 @app.route('/auth/logout')
 def auth_logout():
     firebase_auth.clear_user_session()
-    flash('Has cerrado la sesión correctamente.', 'success')
+    flash('Has cerrado la sesion correctamente.', 'success')
     return redirect(url_for('auth_login_page'))
 
 # RUTA PRINCIPAL MODIFICADA - Sin formulario de API key
@@ -462,7 +462,7 @@ def index():
     if not firebase_auth.is_user_logged_in():
         return redirect(url_for('auth_login_page'))
     
-    # Ir directamente a la búsqueda sin verificar API
+    # Ir directamente a la busqueda sin verificar API
     return redirect(url_for('search_page'))
 
 @app.route('/search')
@@ -501,7 +501,7 @@ def search_page():
                 <li><strong>Seguro:</strong> Autenticado con Firebase</li>
             </ul>
         </div>
-        <div id="loading" class="loading"><div class="spinner"></div><h3>Buscando productos...</h3><p>Máximo 15 segundos</p></div>
+        <div id="loading" class="loading"><div class="spinner"></div><h3>Buscando productos...</h3><p>Maximo 15 segundos</p></div>
         <div id="error" class="error"></div>
     </div>
     <script>
@@ -514,7 +514,7 @@ def search_page():
             
             searching = true;
             showLoading();
-            const timeoutId = setTimeout(() => { searching = false; hideLoading(); showError('Búsqueda muy lenta - Intenta de nuevo'); }, 15000);
+            const timeoutId = setTimeout(() => { searching = false; hideLoading(); showError('Busqueda muy lenta - Intenta de nuevo'); }, 15000);
             
             fetch('/api/search', {
                 method: 'POST',
@@ -523,13 +523,13 @@ def search_page():
             })
             .then(response => { clearTimeout(timeoutId); searching = false; return response.json(); })
             .then(data => { hideLoading(); data.success ? window.location.href = '/results' : showError(data.error); })
-            .catch(() => { clearTimeout(timeoutId); searching = false; hideLoading(); showError('Error de conexión'); });
+            .catch(() => { clearTimeout(timeoutId); searching = false; hideLoading(); showError('Error de conexion'); });
         });
         function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
         function hideLoading() { document.getElementById('loading').style.display = 'none'; }
         function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
     </script>'''
-    return render_template_string(render_page('Búsqueda', content))
+    return render_template_string(render_page('Busqueda', content))
 
 # API SEARCH MODIFICADA - Sin depender de API key, usa ejemplos si no hay API
 @app.route('/api/search', methods=['POST'])
@@ -574,7 +574,7 @@ def api_search():
 def results_page():
     try:
         if 'last_search' not in session:
-            flash('No hay búsquedas recientes.', 'warning')
+            flash('No hay busquedas recientes.', 'warning')
             return redirect(url_for('search_page'))
         
         current_user = firebase_auth.get_current_user()
@@ -583,10 +583,10 @@ def results_page():
         
         search_data = session['last_search']
         products = search_data.get('products', [])
-        query = html.escape(str(search_data.get('query', 'búsqueda')))
+        query = html.escape(str(search_data.get('query', 'busqueda')))
         
         products_html = ""
-        badges = ['MEJOR', '2º', '3º']
+        badges = ['MEJOR', '2do', '3ro']
         colors = ['#4caf50', '#ff9800', '#9c27b0']
         
         for i, product in enumerate(products[:6]):
@@ -616,20 +616,22 @@ def results_page():
             avg_price = sum(prices) / len(prices)
             stats = '''
                 <div style="background: #e8f5e8; border: 1px solid #4caf50; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <h3 style="color: #2e7d32; margin-bottom: 8px;">⚡ Resultados de búsqueda 🇺🇸</h3>
-                    <p><strong>✅ ''' + str(len(products)) + ''' productos encontrados</strong></p>
-                    <p><strong>💰 Mejor precio: 
+                    <h3 style="color: #2e7d32; margin-bottom: 8px;">Resultados de busqueda</h3>
+                    <p><strong>''' + str(len(products)) + ''' productos encontrados</strong></p>
+                    <p><strong>Mejor precio: $''' + f'{min_price:.2f}' + '''</strong></p>
+                    <p><strong>Precio promedio: $''' + f'{avg_price:.2f}' + '''</strong></p>
+                </div>'''
         
         content = '''
         <div style="max-width: 800px; margin: 0 auto;">
             <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
                 <span style="color: white; font-size: 14px;">Hola <strong>''' + user_name_escaped + '''</strong> | 
                 <a href="''' + url_for('auth_logout') + '''" style="color: #50E3C2;">Salir</a> | 
-                <a href="''' + url_for('search_page') + '''" style="color: #50E3C2;">Nueva Búsqueda</a></span>
+                <a href="''' + url_for('search_page') + '''" style="color: #50E3C2;">Nueva Busqueda</a></span>
             </div>
             
             <h1 style="color: white; text-align: center; margin-bottom: 8px;">Resultados: "''' + query + '''"</h1>
-            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">Búsqueda completada</p>
+            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">Busqueda completada</p>
             
             ''' + stats + '''
             ''' + products_html + '''
@@ -679,7 +681,7 @@ def after_request(response):
 # Error handlers
 @app.errorhandler(404)
 def not_found(error):
-    return '<h1>404 - Página no encontrada</h1><p><a href="/">Volver al inicio</a></p>', 404
+    return '<h1>404 - Pagina no encontrada</h1><p><a href="/">Volver al inicio</a></p>', 404
 
 @app.errorhandler(500)
 def internal_error(error):
@@ -689,160 +691,6 @@ if __name__ == '__main__':
     print("Price Finder USA - Starting...")
     print(f"Firebase: {'OK' if os.environ.get('FIREBASE_WEB_API_KEY') else 'NOT_CONFIGURED'}")
     print(f"SerpAPI: {'OK' if os.environ.get('SERPAPI_KEY') else 'NOT_CONFIGURED'}")
-    print(f"Puerto: {os.environ.get('PORT', '5000')}")
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False, threaded=True)
-else:
-    import logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-    logging.getLogger('werkzeug').setLevel(logging.WARNING)'' + f'{min_price:.2f}' + '''</strong></p>
-                    <p><strong>📈 Precio promedio: 
-        
-        content = '''
-        <div style="max-width: 800px; margin: 0 auto;">
-            <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
-                <span style="color: white; font-size: 14px;">Hola <strong>''' + user_name_escaped + '''</strong> | 
-                <a href="''' + url_for('auth_logout') + '''" style="color: #50E3C2;">🚪 Salir</a> | 
-                <a href="''' + url_for('search_page') + '''" style="color: #50E3C2;">🔍 Nueva Búsqueda</a></span>
-            </div>
-            
-            <h1 style="color: white; text-align: center; margin-bottom: 8px;">🇺🇸 Resultados: "''' + query + '''"</h1>
-            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">⚡ Búsqueda completada</p>
-            
-            ''' + stats + '''
-            ''' + products_html + '''
-        </div>'''
-        
-        return render_template_string(render_page('Resultados - Price Finder USA', content))
-    except Exception as e:
-        print(f"Results page error: {e}")
-        flash('Error al mostrar resultados.', 'danger')
-        return redirect(url_for('search_page'))
-
-@app.route('/api/health')
-def health_check():
-    try:
-        return jsonify({
-            'status': 'OK', 
-            'timestamp': datetime.now().isoformat(),
-            'firebase_auth': 'enabled' if firebase_auth.firebase_web_api_key else 'disabled',
-            'serpapi': 'enabled' if price_finder.is_api_configured() else 'disabled'
-        })
-    except Exception as e:
-        return jsonify({'status': 'ERROR', 'message': str(e)}), 500
-
-# Middleware
-@app.before_request
-def before_request():
-    if 'timestamp' in session:
-        try:
-            timestamp_str = session['timestamp']
-            if isinstance(timestamp_str, str) and len(timestamp_str) > 10:
-                last_activity = datetime.fromisoformat(timestamp_str)
-                time_diff = (datetime.now() - last_activity).total_seconds()
-                if time_diff > 1200:  # 20 minutos
-                    session.clear()
-        except:
-            session.clear()
-    
-    session['timestamp'] = datetime.now().isoformat()
-
-@app.after_request
-def after_request(response):
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    return response
-
-# Error handlers
-@app.errorhandler(404)
-def not_found(error):
-    return '<h1>404 - Página no encontrada</h1><p><a href="/">Volver al inicio</a></p>', 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return '<h1>500 - Error interno</h1><p><a href="/">Volver al inicio</a></p>', 500
-
-if __name__ == '__main__':
-    print("🚀 Price Finder USA")
-    print(f"Firebase: {'✅' if os.environ.get('FIREBASE_WEB_API_KEY') else '❌'}")
-    print(f"SerpAPI: {'✅' if os.environ.get('SERPAPI_KEY') else '❌'}")
-    print(f"Puerto: {os.environ.get('PORT', '5000')}")
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False, threaded=True)
-else:
-    import logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
-    logging.getLogger('werkzeug').setLevel(logging.WARNING)'' + f'{avg_price:.2f}' + '''</strong></p>
-                </div>'''
-        
-        content = '''
-        <div style="max-width: 800px; margin: 0 auto;">
-            <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
-                <span style="color: white; font-size: 14px;">Hola <strong>''' + user_name_escaped + '''</strong> | 
-                <a href="''' + url_for('auth_logout') + '''" style="color: #50E3C2;">🚪 Salir</a> | 
-                <a href="''' + url_for('search_page') + '''" style="color: #50E3C2;">🔍 Nueva Búsqueda</a></span>
-            </div>
-            
-            <h1 style="color: white; text-align: center; margin-bottom: 8px;">🇺🇸 Resultados: "''' + query + '''"</h1>
-            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">⚡ Búsqueda completada</p>
-            
-            ''' + stats + '''
-            ''' + products_html + '''
-        </div>'''
-        
-        return render_template_string(render_page('Resultados - Price Finder USA', content))
-    except Exception as e:
-        print(f"Results page error: {e}")
-        flash('Error al mostrar resultados.', 'danger')
-        return redirect(url_for('search_page'))
-
-@app.route('/api/health')
-def health_check():
-    try:
-        return jsonify({
-            'status': 'OK', 
-            'timestamp': datetime.now().isoformat(),
-            'firebase_auth': 'enabled' if firebase_auth.firebase_web_api_key else 'disabled',
-            'serpapi': 'enabled' if price_finder.is_api_configured() else 'disabled'
-        })
-    except Exception as e:
-        return jsonify({'status': 'ERROR', 'message': str(e)}), 500
-
-# Middleware
-@app.before_request
-def before_request():
-    if 'timestamp' in session:
-        try:
-            timestamp_str = session['timestamp']
-            if isinstance(timestamp_str, str) and len(timestamp_str) > 10:
-                last_activity = datetime.fromisoformat(timestamp_str)
-                time_diff = (datetime.now() - last_activity).total_seconds()
-                if time_diff > 1200:  # 20 minutos
-                    session.clear()
-        except:
-            session.clear()
-    
-    session['timestamp'] = datetime.now().isoformat()
-
-@app.after_request
-def after_request(response):
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    return response
-
-# Error handlers
-@app.errorhandler(404)
-def not_found(error):
-    return '<h1>404 - Página no encontrada</h1><p><a href="/">Volver al inicio</a></p>', 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return '<h1>500 - Error interno</h1><p><a href="/">Volver al inicio</a></p>', 500
-
-if __name__ == '__main__':
-    print("🚀 Price Finder USA")
-    print(f"Firebase: {'✅' if os.environ.get('FIREBASE_WEB_API_KEY') else '❌'}")
-    print(f"SerpAPI: {'✅' if os.environ.get('SERPAPI_KEY') else '❌'}")
     print(f"Puerto: {os.environ.get('PORT', '5000')}")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False, threaded=True)
 else:
