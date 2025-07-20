@@ -1,4 +1,4 @@
-# app.py - Price Finder USA con Firebase Auth (CORREGIDO para Render)
+# app.py - Price Finder USA con Firebase Auth y SerpAPI desde Environment
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template_string, flash
 import requests
 import os
@@ -71,7 +71,7 @@ class FirebaseAuth:
         session.permanent = True
     
     def clear_user_session(self):
-        important_data = {key: session.get(key) for key in ['api_key', 'timestamp'] if key in session}
+        important_data = {key: session.get(key) for key in ['timestamp'] if key in session}
         session.clear()
         for key, value in important_data.items():
             session[key] = value
@@ -110,17 +110,28 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# Price Finder Class
+# Price Finder Class - MODIFICADO para usar variable de entorno
 class PriceFinder:
-    def __init__(self, api_key):
-        self.api_key = api_key
+    def __init__(self):
+        self.api_key = os.environ.get('SERPAPI_KEY')
         self.base_url = "https://serpapi.com/search"
         self.cache = {}
         self.cache_ttl = 180
         self.timeouts = {'connect': 3, 'read': 8}
         self.blacklisted_stores = ['alibaba', 'aliexpress', 'temu', 'wish', 'banggood', 'dhgate', 'falabella', 'ripley', 'linio', 'mercadolibre']
+        
+        if not self.api_key:
+            print("⚠️ SERPAPI_KEY no configurada en variables de entorno")
+        else:
+            print("✅ SerpAPI configurado desde environment")
+    
+    def is_api_configured(self):
+        return bool(self.api_key)
     
     def test_api_key(self):
+        if not self.api_key:
+            return {'valid': False, 'message': 'API key no configurada en el servidor'}
+        
         try:
             params = {'engine': 'google', 'q': 'test', 'api_key': self.api_key, 'num': 1}
             response = requests.get(self.base_url, params=params, timeout=(self.timeouts['connect'], self.timeouts['read']))
@@ -181,6 +192,9 @@ class PriceFinder:
         return "#"
     
     def _make_api_request(self, engine, query):
+        if not self.api_key:
+            return None
+        
         params = {'engine': engine, 'q': query, 'api_key': self.api_key, 'num': 5, 'location': 'United States', 'gl': 'us'}
         try:
             time.sleep(0.3)
@@ -234,6 +248,10 @@ class PriceFinder:
     def search_products(self, query):
         if not query or len(query) < 2:
             return self._get_examples("producto")
+        
+        if not self.api_key:
+            print("Sin API key - usando ejemplos")
+            return self._get_examples(query)
         
         cache_key = f"search_{hash(query.lower())}"
         if cache_key in self.cache:
@@ -289,7 +307,10 @@ class PriceFinder:
             })
         return examples
 
-# Templates - CORREGIDO: Sin emojis problemáticos
+# Instancia global de PriceFinder
+price_finder = PriceFinder()
+
+# Templates
 def render_page(title, content):
     template = '''<!DOCTYPE html>
 <html lang="es">
@@ -316,6 +337,7 @@ def render_page(title, content):
         .features li { padding: 3px 0; font-size: 14px; }
         .features li:before { content: "✅ "; }
         .error { background: #ffebee; color: #c62828; padding: 12px; border-radius: 6px; margin: 12px 0; display: none; }
+        .warning { background: #fff3cd; color: #856404; padding: 12px; border-radius: 6px; margin: 12px 0; }
         .loading { text-align: center; padding: 30px; display: none; }
         .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #1a73e8; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -425,6 +447,7 @@ def auth_logout():
     flash('Has cerrado la sesión correctamente.', 'success')
     return redirect(url_for('auth_login_page'))
 
+# RUTA PRINCIPAL MODIFICADA - Sin formulario de API key
 @app.route('/')
 def index():
     if not firebase_auth.is_user_logged_in():
@@ -434,89 +457,39 @@ def index():
     user_name = current_user['user_name'] if current_user else 'Usuario'
     user_name_escaped = html.escape(user_name)
     
-    # Usar concatenación normal sin emojis problemáticos
-    content = '''
-    <div class="container">
-        <div class="user-info">Hola, <strong>''' + user_name_escaped + '''</strong>! | <a href="''' + url_for('auth_logout') + '''">Cerrar Sesión</a></div>
-        
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="flash {{ category }}">{{ message }}</div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        
-        <h1>Price Finder USA</h1>
-        <p class="subtitle">Búsquedas ultra rápidas - Solo tiendas de EE.UU.</p>
-        <form id="setupForm">
-            <label for="apiKey">API Key de SerpAPI:</label>
-            <input type="text" id="apiKey" placeholder="Pega aquí tu API key..." required>
-            <button type="submit">Configurar y Continuar</button>
-        </form>
-        <div class="features">
-            <h3>Sistema optimizado:</h3>
-            <ul>
-                <li>Búsquedas ultra rápidas (menos de 10 segundos)</li>
-                <li>Cache inteligente optimizado</li>
-                <li>SOLO tiendas estadounidenses</li>
-                <li>Firebase Auth integrado</li>
-                <li>SSL automático incluido</li>
-            </ul>
-            <p style="margin-top: 12px; font-size: 13px;"><strong>¿No tienes API key?</strong> <a href="https://serpapi.com/" target="_blank" style="color: #1a73e8;">Obtén una gratis</a></p>
-        </div>
-        <div id="error" class="error"></div>
-        <div id="loading" class="loading"><div class="spinner"></div><p>Validando API key...</p></div>
-    </div>
-    <script>
-        document.getElementById('setupForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            const apiKey = document.getElementById('apiKey').value.trim();
-            if (!apiKey) return showError('Por favor ingresa tu API key');
+    # Verificar si la API está configurada
+    if not price_finder.is_api_configured():
+        content = '''
+        <div class="container">
+            <div class="user-info">Hola, <strong>''' + user_name_escaped + '''</strong>! | <a href="''' + url_for('auth_logout') + '''">Cerrar Sesión</a></div>
             
-            showLoading();
-            const timeoutId = setTimeout(() => { hideLoading(); showError('Timeout - Intenta de nuevo'); }, 8000);
+            <h1>Price Finder USA</h1>
+            <p class="subtitle">Sistema de búsqueda de productos</p>
             
-            fetch('/setup', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                body: 'api_key=' + encodeURIComponent(apiKey)
-            })
-            .then(response => { clearTimeout(timeoutId); return response.json(); })
-            .then(data => { hideLoading(); data.success ? window.location.href = '/search' : showError(data.error); })
-            .catch(() => { clearTimeout(timeoutId); hideLoading(); showError('Error de conexión'); });
-        });
-        function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
-        function hideLoading() { document.getElementById('loading').style.display = 'none'; }
-        function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
-    </script>'''
-    return render_template_string(render_page('Price Finder USA', content))
-
-@app.route('/setup', methods=['POST'])
-@login_required
-def setup_api():
-    try:
-        api_key = request.form.get('api_key', '').strip()
-        if not api_key:
-            return jsonify({'error': 'API key requerida'}), 400
-        
-        price_finder = PriceFinder(api_key)
-        test_result = price_finder.test_api_key()
-        
-        if not test_result.get('valid'):
-            return jsonify({'error': test_result.get('message', 'API key inválida')}), 400
-        
-        session['api_key'] = api_key
-        session.permanent = True
-        return jsonify({'success': True, 'message': 'API key configurada correctamente'})
-    except Exception:
-        return jsonify({'error': 'Error interno del servidor'}), 500
+            <div class="warning">
+                <h3>⚠️ Servicio no disponible</h3>
+                <p>La API de SerpAPI no está configurada en el servidor. Contacta al administrador.</p>
+            </div>
+            
+            <div class="features">
+                <h3>Variables de entorno requeridas:</h3>
+                <ul>
+                    <li><strong>SERPAPI_KEY:</strong> Tu clave de API de SerpAPI</li>
+                    <li><strong>FIREBASE_WEB_API_KEY:</strong> Clave de Firebase Auth</li>
+                    <li><strong>SECRET_KEY:</strong> Clave secreta de Flask</li>
+                </ul>
+            </div>
+        </div>'''
+        return render_template_string(render_page('Error - Price Finder USA', content))
+    
+    # Si la API está configurada, ir directamente a la búsqueda
+    return redirect(url_for('search_page'))
 
 @app.route('/search')
 @login_required
 def search_page():
-    if 'api_key' not in session:
-        flash('Primero debes configurar tu API key.', 'warning')
+    if not price_finder.is_api_configured():
+        flash('El servicio no está disponible. API no configurada.', 'danger')
         return redirect(url_for('index'))
     
     current_user = firebase_auth.get_current_user()
@@ -526,6 +499,14 @@ def search_page():
     content = '''
     <div class="container">
         <div class="user-info"><strong>''' + user_name_escaped + '''</strong> | <a href="''' + url_for('auth_logout') + '''">Salir</a> | <a href="''' + url_for('index') + '''">Inicio</a></div>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash {{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
         
         <h1>Buscar Productos</h1>
         <p class="subtitle">Resultados en 10 segundos</p>
@@ -574,12 +555,13 @@ def search_page():
     </script>'''
     return render_template_string(render_page('Búsqueda', content))
 
+# API SEARCH MODIFICADA - Sin depender de API key en sesión
 @app.route('/api/search', methods=['POST'])
 @login_required
 def api_search():
     try:
-        if 'api_key' not in session:
-            return jsonify({'error': 'API key no configurada'}), 400
+        if not price_finder.is_api_configured():
+            return jsonify({'error': 'Servicio no configurado en el servidor'}), 400
         
         data = request.get_json()
         query = data.get('query', '').strip() if data else ''
@@ -592,7 +574,6 @@ def api_search():
         user_email = session.get('user_email', 'Unknown')
         print(f"Search request from {user_email}: {query}")
         
-        price_finder = PriceFinder(session['api_key'])
         products = price_finder.search_products(query)
         
         session['last_search'] = {
@@ -609,7 +590,6 @@ def api_search():
         print(f"Search error: {e}")
         try:
             query = request.get_json().get('query', 'producto') if request.get_json() else 'producto'
-            price_finder = PriceFinder('dummy')
             fallback = price_finder._get_examples(query)
             session['last_search'] = {'query': str(query), 'products': fallback, 'timestamp': datetime.now().isoformat()}
             return jsonify({'success': True, 'products': fallback, 'total': len(fallback)})
@@ -697,7 +677,8 @@ def health_check():
         return jsonify({
             'status': 'OK', 
             'timestamp': datetime.now().isoformat(),
-            'firebase_auth': 'enabled' if firebase_auth.firebase_web_api_key else 'disabled'
+            'firebase_auth': 'enabled' if firebase_auth.firebase_web_api_key else 'disabled',
+            'serpapi': 'enabled' if price_finder.is_api_configured() else 'disabled'
         })
     except Exception as e:
         return jsonify({'status': 'ERROR', 'message': str(e)}), 500
@@ -737,6 +718,7 @@ def internal_error(error):
 if __name__ == '__main__':
     print("🚀 Price Finder USA")
     print(f"Firebase: {'✅' if os.environ.get('FIREBASE_WEB_API_KEY') else '❌'}")
+    print(f"SerpAPI: {'✅' if os.environ.get('SERPAPI_KEY') else '❌'}")
     print(f"Puerto: {os.environ.get('PORT', '5000')}")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False, threaded=True)
 else:
