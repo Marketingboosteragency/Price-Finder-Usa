@@ -1,17 +1,15 @@
-# requirements.txt - Price Finder USA con Búsqueda por Imagen
-Flask==2.3.3
+# requirements.txt - EMERGENCIA (solo lo esencial)
+# Usar SOLO esto si el build sigue fallando
+
+Flask==3.0.0
 requests==2.31.0
-beautifulsoup4==4.12.2
-fake-useragent==1.4.0
-Pillow==10.0.1
-google-generativeai==0.3.2
-google-api-python-client==2.108.0
-google-auth-httplib2==0.1.1
 gunicorn==21.2.0
 
-# Dependencias adicionales para estabilidad
-Werkzeug==2.3.7
+# ESTAS LÍNEAS SE PUEDEN COMENTAR SI FALLAN:
+# Pillow==10.4.0
+# google-generativeai==0.8.3
+
+# Dependencias core mínimas
+Werkzeug==3.0.1
 itsdangerous==2.1.2
-Jinja2==3.1.2
-MarkupSafe==2.1.3
-click==8.1.7
+Jinja2==3.1.3
