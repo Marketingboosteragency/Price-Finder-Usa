@@ -350,7 +350,7 @@ def render_page(title, content):
         .loading { text-align: center; padding: 30px; display: none; }
         .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #1a73e8; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .user-info { background: #e3f2fd; padding: 12px; border-radius: 6px; margin-bottom: 15px; text-align: center; font-size: 14px; }
+        .user-info { background: #e3f2fd; padding: 12px; border-radius: 6px; margin-bottom: 15px; text-align: center; font-size: 14px; display: flex; align-items: center; justify-content: center; }
         .user-info a { color: #1976d2; text-decoration: none; font-weight: 600; }
         .flash { padding: 12px; margin-bottom: 8px; border-radius: 6px; font-size: 14px; }
         .flash.success { background-color: #d4edda; color: #155724; }
@@ -475,7 +475,7 @@ def search_page():
     content = '''
     <div class="container">
         <div class="user-info">
-            <span>Hola, <strong>''' + user_name_escaped + '''</strong></span>
+            <span><strong>''' + user_name_escaped + '''</strong></span>
             <div style="display: inline-block; margin-left: 15px;">
                 <a href="''' + url_for('auth_logout') + '''" style="background: #dc3545; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px; margin-right: 8px;">Salir</a>
                 <a href="''' + url_for('index') + '''" style="background: #28a745; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px;">Inicio</a>
@@ -504,7 +504,6 @@ def search_page():
                 <li><strong>Velocidad:</strong> Resultados en menos de 15 segundos</li>
                 <li><strong>USA:</strong> Amazon, Walmart, Target, Best Buy</li>
                 <li><strong>Filtrado:</strong> Sin Alibaba, Temu, AliExpress</li>
-                <li><strong>Seguro:</strong> Autenticado con Firebase</li>
             </ul>
         </div>
         <div id="loading" class="loading"><div class="spinner"></div><h3>Buscando productos...</h3><p>Maximo 15 segundos</p></div>
@@ -630,10 +629,12 @@ def results_page():
         
         content = '''
         <div style="max-width: 800px; margin: 0 auto;">
-            <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
-                <span style="color: white; font-size: 14px;">Hola <strong>''' + user_name_escaped + '''</strong> | 
-                <a href="''' + url_for('auth_logout') + '''" style="color: #50E3C2;">Salir</a> | 
-                <a href="''' + url_for('search_page') + '''" style="color: #50E3C2;">Nueva Busqueda</a></span>
+            <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center; display: flex; align-items: center; justify-content: center;">
+                <span style="color: white; font-size: 14px;">Hola <strong>''' + user_name_escaped + '''</strong></span>
+                <div style="margin-left: 15px;">
+                    <a href="''' + url_for('auth_logout') + '''" style="background: rgba(220,53,69,0.9); color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px; margin-right: 8px;">Salir</a>
+                    <a href="''' + url_for('search_page') + '''" style="background: rgba(40,167,69,0.9); color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px;">Nueva Busqueda</a>
+                </div>
             </div>
             
             <h1 style="color: white; text-align: center; margin-bottom: 8px;">Resultados: "''' + query + '''"</h1>
