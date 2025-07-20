@@ -3,7 +3,6 @@ import requests
 import os
 import re
 import html
-import threading
 import time
 from datetime import datetime
 from urllib.parse import urlparse, unquote, quote_plus
@@ -141,15 +140,19 @@ class PriceFinder:
     
     def _extract_specifications(self, query):
         """Extracción simplificada de especificaciones"""
+        if not query:
+            return {'colors': [], 'sizes': [], 'materials': []}
+            
         query_lower = query.lower()
         found_specs = {'colors': [], 'sizes': [], 'materials': []}
         
         # Solo verificar especificaciones críticas para optimizar
         for category in ['colors', 'sizes', 'materials']:
-            for term in self.specifications[category][:3]:  # Solo primeros 3
-                if term in query_lower:
-                    found_specs[category].append(term)
-                    break  # Solo una por categoría para optimizar
+            if category in self.specifications:
+                for term in self.specifications[category][:3]:  # Solo primeros 3
+                    if term in query_lower:
+                        found_specs[category].append(term)
+                        break  # Solo una por categoría para optimizar
         
         return found_specs
     
@@ -172,7 +175,7 @@ class PriceFinder:
                     clean_link = unquote(general_link.split('url=')[1].split('&')[0])
                     if self._is_valid_url(clean_link):
                         return clean_link
-                except:
+                except Exception:
                     pass
             return general_link
         
@@ -182,30 +185,25 @@ class PriceFinder:
         
         if title:
             # Links específicos por tienda
-            if 'amazon' in source.lower():
-                search_query = quote_plus(str(title))
+            search_query = quote_plus(str(title))
+            source_lower = source.lower()
+            
+            if 'amazon' in source_lower:
                 return f"https://www.amazon.com/s?k={search_query}&ref=nb_sb_noss"
-            elif 'walmart' in source.lower():
-                search_query = quote_plus(str(title))
+            elif 'walmart' in source_lower:
                 return f"https://www.walmart.com/search?q={search_query}"
-            elif 'target' in source.lower():
-                search_query = quote_plus(str(title))
+            elif 'target' in source_lower:
                 return f"https://www.target.com/s?searchTerm={search_query}"
-            elif 'bestbuy' in source.lower() or 'best buy' in source.lower():
-                search_query = quote_plus(str(title))
+            elif 'bestbuy' in source_lower or 'best buy' in source_lower:
                 return f"https://www.bestbuy.com/site/searchpage.jsp?st={search_query}"
-            elif 'ebay' in source.lower():
-                search_query = quote_plus(str(title))
+            elif 'ebay' in source_lower:
                 return f"https://www.ebay.com/sch/i.html?_nkw={search_query}"
-            elif 'homedepot' in source.lower() or 'home depot' in source.lower():
-                search_query = quote_plus(str(title))
+            elif 'homedepot' in source_lower or 'home depot' in source_lower:
                 return f"https://www.homedepot.com/s/{search_query}"
-            elif 'lowes' in source.lower():
-                search_query = quote_plus(str(title))
+            elif 'lowes' in source_lower:
                 return f"https://www.lowes.com/search?searchTerm={search_query}"
             else:
                 # Link genérico de Google Shopping
-                search_query = quote_plus(str(title))
                 return f"https://www.google.com/search?tbm=shop&q={search_query}"
         
         return "#"
@@ -217,11 +215,14 @@ class PriceFinder:
         try:
             parsed = urlparse(str(url))
             return bool(parsed.scheme in ['http', 'https'] and parsed.netloc)
-        except:
+        except Exception:
             return False
     
     def _build_queries(self, query):
         """Construcción optimizada de consultas"""
+        if not query:
+            return ['buy online']
+            
         # Máximo 2 consultas para evitar timeouts
         queries = [
             f'"{query}" buy online',
@@ -275,6 +276,9 @@ class PriceFinder:
         # Procesar máximo 5 resultados para optimizar
         for item in data[results_key][:5]:
             try:
+                if not item:
+                    continue
+                    
                 if self._is_blacklisted_store(item.get('source', '')):
                     continue
                 
@@ -294,7 +298,7 @@ class PriceFinder:
                     'price': str(price_str),
                     'price_numeric': float(price_num),
                     'source': self._clean_text(item.get('source', 'Tienda')),
-                    'link': str(item.get('link', '#')),
+                    'link': self._get_valid_link(item),  # Usar la nueva función
                     'rating': str(item.get('rating', '')),
                     'reviews': str(item.get('reviews', '')),
                     'image': ''
@@ -305,7 +309,8 @@ class PriceFinder:
                 if len(products) >= 3:
                     break
                     
-            except Exception:
+            except Exception as e:
+                print(f"Error procesando item: {e}")
                 continue
         
         return products
@@ -360,18 +365,31 @@ class PriceFinder:
         return final_products
     
     def _get_examples(self, query):
-        """Ejemplos optimizados"""
+        """Ejemplos optimizados con links funcionales"""
         stores = ['Amazon', 'Walmart', 'Target']
         examples = []
         
         for i in range(3):  # Solo 3 ejemplos
             price = self._generate_realistic_price(query, i)
+            store = stores[i]
+            
+            # Generar link específico de búsqueda por tienda
+            search_query = quote_plus(str(query))
+            if store == 'Amazon':
+                link = f"https://www.amazon.com/s?k={search_query}&ref=nb_sb_noss"
+            elif store == 'Walmart':
+                link = f"https://www.walmart.com/search?q={search_query}"
+            elif store == 'Target':
+                link = f"https://www.target.com/s?searchTerm={search_query}"
+            else:
+                link = f"https://www.google.com/search?tbm=shop&q={search_query}"
+            
             examples.append({
                 'title': f'{self._clean_text(query)} - {["Mejor Precio", "Oferta", "Popular"][i]}',
                 'price': f'${price:.2f}',
                 'price_numeric': price,
-                'source': stores[i],
-                'link': f'https://www.{stores[i].lower()}.com',
+                'source': store,
+                'link': link,  # Link funcional específico
                 'rating': ['4.5', '4.2', '4.0'][i],
                 'reviews': ['500', '300', '200'][i],
                 'image': ''
@@ -662,7 +680,7 @@ def results_page():
                         {price} <span style="font-size: 14px; color: #666;">🇺🇸</span>
                     </div>
                     <p style="color: #666; margin-bottom: 15px;">🏪 {source}</p>
-                    <a href="{link}" target="_blank" style="background: #1a73e8; color: white; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600;">
+                    <a href="{link}" target="_blank" rel="noopener noreferrer" onclick="console.log('Clicking link:', this.href); return true;" style="background: #1a73e8; color: white; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; display: inline-block; cursor: pointer;">
                         🛒 Ver Producto
                     </a>
                 </div>'''
@@ -712,7 +730,8 @@ def test_endpoint():
             'cache_system': True,
             'timeout_protection': True,
             'memory_efficient': True,
-            'us_stores_only': True
+            'us_stores_only': True,
+            'functional_links': True
         }
     })
 
@@ -723,11 +742,18 @@ def before_request():
     # Limpiar sesiones viejas automáticamente
     if 'timestamp' in session:
         try:
-            last_activity = datetime.fromisoformat(session['timestamp'])
-            if (datetime.now() - last_activity).seconds > 1800:  # 30 minutos
-                session.clear()
-        except:
-            pass
+            # Validar formato de timestamp antes de parsear
+            timestamp_str = session['timestamp']
+            if isinstance(timestamp_str, str) and len(timestamp_str) > 10:
+                last_activity = datetime.fromisoformat(timestamp_str)
+                time_diff = (datetime.now() - last_activity).total_seconds()
+                if time_diff > 1800:  # 30 minutos
+                    session.clear()
+        except (ValueError, TypeError, AttributeError) as e:
+            # Si hay error parseando el timestamp, limpiar sesión
+            session.clear()
+            print(f"Error parseando timestamp: {e}")
+    
     session['timestamp'] = datetime.now().isoformat()
 
 @app.after_request
