@@ -1,4 +1,4 @@
-# app.py - Price Finder USA con Firebase Auth (Versión Compacta para Render)
+# app.py - Price Finder USA con Firebase Auth (CORREGIDO para Render)
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template_string, flash
 import requests
 import os
@@ -289,47 +289,48 @@ class PriceFinder:
             })
         return examples
 
-# Templates
+# Templates - CORREGIDO: Sin f-strings para evitar conflictos con Jinja2
 def render_page(title, content):
-    return f'''<!DOCTYPE html>
+    template = '''<!DOCTYPE html>
 <html lang="es">
 <head>
-    <title>{title}</title>
+    <title>''' + title + '''</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 15px; }}
-        .container {{ max-width: 650px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.15); }}
-        h1 {{ color: #1a73e8; text-align: center; margin-bottom: 8px; font-size: 1.8em; }}
-        .subtitle {{ text-align: center; color: #666; margin-bottom: 25px; }}
-        input {{ width: 100%; padding: 12px; margin: 8px 0; border: 2px solid #e1e5e9; border-radius: 6px; font-size: 16px; }}
-        input:focus {{ outline: none; border-color: #1a73e8; }}
-        button {{ width: 100%; padding: 12px; background: #1a73e8; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: 600; }}
-        button:hover {{ background: #1557b0; }}
-        .search-bar {{ display: flex; gap: 8px; margin-bottom: 20px; }}
-        .search-bar input {{ flex: 1; }}
-        .search-bar button {{ width: auto; padding: 12px 20px; }}
-        .tips {{ background: #e8f5e8; border: 1px solid #4caf50; padding: 15px; border-radius: 6px; margin-bottom: 15px; font-size: 14px; }}
-        .features {{ background: #f8f9fa; padding: 15px; border-radius: 6px; margin-top: 20px; }}
-        .features ul {{ list-style: none; }}
-        .features li {{ padding: 3px 0; font-size: 14px; }}
-        .features li:before {{ content: "✅ "; }}
-        .error {{ background: #ffebee; color: #c62828; padding: 12px; border-radius: 6px; margin: 12px 0; display: none; }}
-        .loading {{ text-align: center; padding: 30px; display: none; }}
-        .spinner {{ border: 3px solid #f3f3f3; border-top: 3px solid #1a73e8; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }}
-        @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
-        .user-info {{ background: #e3f2fd; padding: 12px; border-radius: 6px; margin-bottom: 15px; text-align: center; font-size: 14px; }}
-        .user-info a {{ color: #1976d2; text-decoration: none; font-weight: 600; }}
-        .flash {{ padding: 12px; margin-bottom: 8px; border-radius: 6px; font-size: 14px; }}
-        .flash.success {{ background-color: #d4edda; color: #155724; }}
-        .flash.danger {{ background-color: #f8d7da; color: #721c24; }}
-        .flash.warning {{ background-color: #fff3cd; color: #856404; }}
-        .render-info {{ background: #1a73e8; color: white; padding: 8px; text-align: center; font-size: 12px; margin-bottom: 15px; border-radius: 6px; }}
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 15px; }
+        .container { max-width: 650px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.15); }
+        h1 { color: #1a73e8; text-align: center; margin-bottom: 8px; font-size: 1.8em; }
+        .subtitle { text-align: center; color: #666; margin-bottom: 25px; }
+        input { width: 100%; padding: 12px; margin: 8px 0; border: 2px solid #e1e5e9; border-radius: 6px; font-size: 16px; }
+        input:focus { outline: none; border-color: #1a73e8; }
+        button { width: 100%; padding: 12px; background: #1a73e8; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: 600; }
+        button:hover { background: #1557b0; }
+        .search-bar { display: flex; gap: 8px; margin-bottom: 20px; }
+        .search-bar input { flex: 1; }
+        .search-bar button { width: auto; padding: 12px 20px; }
+        .tips { background: #e8f5e8; border: 1px solid #4caf50; padding: 15px; border-radius: 6px; margin-bottom: 15px; font-size: 14px; }
+        .features { background: #f8f9fa; padding: 15px; border-radius: 6px; margin-top: 20px; }
+        .features ul { list-style: none; }
+        .features li { padding: 3px 0; font-size: 14px; }
+        .features li:before { content: "✅ "; }
+        .error { background: #ffebee; color: #c62828; padding: 12px; border-radius: 6px; margin: 12px 0; display: none; }
+        .loading { text-align: center; padding: 30px; display: none; }
+        .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #1a73e8; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .user-info { background: #e3f2fd; padding: 12px; border-radius: 6px; margin-bottom: 15px; text-align: center; font-size: 14px; }
+        .user-info a { color: #1976d2; text-decoration: none; font-weight: 600; }
+        .flash { padding: 12px; margin-bottom: 8px; border-radius: 6px; font-size: 14px; }
+        .flash.success { background-color: #d4edda; color: #155724; }
+        .flash.danger { background-color: #f8d7da; color: #721c24; }
+        .flash.warning { background-color: #fff3cd; color: #856404; }
+        .render-info { background: #1a73e8; color: white; padding: 8px; text-align: center; font-size: 12px; margin-bottom: 15px; border-radius: 6px; }
     </style>
 </head>
-<body>{content}</body>
+<body>''' + content + '''</body>
 </html>'''
+    return template
 
 AUTH_LOGIN_TEMPLATE = """
 <!DOCTYPE html>
@@ -436,11 +437,13 @@ def index():
     
     current_user = firebase_auth.get_current_user()
     user_name = current_user['user_name'] if current_user else 'Usuario'
+    user_name_escaped = html.escape(user_name)
     
-    content = f'''
+    # Usar concatenación normal en lugar de f-string para evitar conflictos con Jinja2
+    content = '''
     <div class="container">
         <div class="render-info">🚀 Desplegado en Render.com | Firebase Auth Activo</div>
-        <div class="user-info">👋 ¡Hola, <strong>{html.escape(user_name)}</strong>! | <a href="{url_for('auth_logout')}">🚪 Cerrar Sesión</a></div>
+        <div class="user-info">👋 ¡Hola, <strong>''' + user_name_escaped + '''</strong>! | <a href="''' + url_for('auth_logout') + '''">🚪 Cerrar Sesión</a></div>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
@@ -472,26 +475,26 @@ def index():
         <div id="loading" class="loading"><div class="spinner"></div><p>⚡ Validando API key...</p></div>
     </div>
     <script>
-        document.getElementById('setupForm').addEventListener('submit', function(e) {{
+        document.getElementById('setupForm').addEventListener('submit', function(e) {
             e.preventDefault();
             const apiKey = document.getElementById('apiKey').value.trim();
             if (!apiKey) return showError('Por favor ingresa tu API key');
             
             showLoading();
-            const timeoutId = setTimeout(() => {{ hideLoading(); showError('Timeout - Intenta de nuevo'); }}, 8000);
+            const timeoutId = setTimeout(() => { hideLoading(); showError('Timeout - Intenta de nuevo'); }, 8000);
             
-            fetch('/setup', {{
+            fetch('/setup', {
                 method: 'POST',
-                headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
                 body: 'api_key=' + encodeURIComponent(apiKey)
-            }})
-            .then(response => {{ clearTimeout(timeoutId); return response.json(); }})
-            .then(data => {{ hideLoading(); data.success ? window.location.href = '/search' : showError(data.error); }})
-            .catch(() => {{ clearTimeout(timeoutId); hideLoading(); showError('Error de conexión'); }});
-        }});
-        function showLoading() {{ document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }}
-        function hideLoading() {{ document.getElementById('loading').style.display = 'none'; }}
-        function showError(msg) {{ hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }}
+            })
+            .then(response => { clearTimeout(timeoutId); return response.json(); })
+            .then(data => { hideLoading(); data.success ? window.location.href = '/search' : showError(data.error); })
+            .catch(() => { clearTimeout(timeoutId); hideLoading(); showError('Error de conexión'); });
+        });
+        function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
+        function hideLoading() { document.getElementById('loading').style.display = 'none'; }
+        function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
     </script>'''
     return render_template_string(render_page('🚀 Price Finder USA - Render.com', content))
 
@@ -524,11 +527,12 @@ def search_page():
     
     current_user = firebase_auth.get_current_user()
     user_name = current_user['user_name'] if current_user else 'Usuario'
+    user_name_escaped = html.escape(user_name)
     
-    content = f'''
+    content = '''
     <div class="container">
-        <div class="render-info">🚀 Render.com | Usuario: {html.escape(user_name)}</div>
-        <div class="user-info">👋 <strong>{html.escape(user_name)}</strong> | <a href="{url_for('auth_logout')}">🚪 Salir</a> | <a href="{url_for('index')}">🏠 Inicio</a></div>
+        <div class="render-info">🚀 Render.com | Usuario: ''' + user_name_escaped + '''</div>
+        <div class="user-info">👋 <strong>''' + user_name_escaped + '''</strong> | <a href="''' + url_for('auth_logout') + '''">🚪 Salir</a> | <a href="''' + url_for('index') + '''">🏠 Inicio</a></div>
         
         <h1>🔍 Buscar Productos</h1>
         <p class="subtitle">⚡ Optimizado para Render - Resultados en 10 segundos</p>
@@ -552,7 +556,7 @@ def search_page():
     </div>
     <script>
         let searching = false;
-        document.getElementById('searchForm').addEventListener('submit', function(e) {{
+        document.getElementById('searchForm').addEventListener('submit', function(e) {
             e.preventDefault();
             if (searching) return;
             const query = document.getElementById('searchQuery').value.trim();
@@ -560,22 +564,22 @@ def search_page():
             
             searching = true;
             showLoading();
-            const timeoutId = setTimeout(() => {{ searching = false; hideLoading(); showError('Búsqueda muy lenta - Intenta de nuevo'); }}, 15000);
+            const timeoutId = setTimeout(() => { searching = false; hideLoading(); showError('Búsqueda muy lenta - Intenta de nuevo'); }, 15000);
             
-            fetch('/api/search', {{
+            fetch('/api/search', {
                 method: 'POST',
-                headers: {{'Content-Type': 'application/json'}},
-                body: JSON.stringify({{query: query}})
-            }})
-            .then(response => {{ clearTimeout(timeoutId); searching = false; return response.json(); }})
-            .then(data => {{ hideLoading(); data.success ? window.location.href = '/results' : showError(data.error); }})
-            .catch(() => {{ clearTimeout(timeoutId); searching = false; hideLoading(); showError('Error de conexión'); }});
-        }});
-        function showLoading() {{ document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }}
-        function hideLoading() {{ document.getElementById('loading').style.display = 'none'; }}
-        function showError(msg) {{ hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }}
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({query: query})
+            })
+            .then(response => { clearTimeout(timeoutId); searching = false; return response.json(); })
+            .then(data => { hideLoading(); data.success ? window.location.href = '/results' : showError(data.error); })
+            .catch(() => { clearTimeout(timeoutId); searching = false; hideLoading(); showError('Error de conexión'); });
+        });
+        function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
+        function hideLoading() { document.getElementById('loading').style.display = 'none'; }
+        function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
     </script>'''
-    return render_page('Búsqueda - Render.com', content)
+    return render_template_string(render_page('Búsqueda - Render.com', content))
 
 @app.route('/api/search', methods=['POST'])
 @login_required
@@ -629,6 +633,7 @@ def results_page():
         
         current_user = firebase_auth.get_current_user()
         user_name = current_user['user_name'] if current_user else 'Usuario'
+        user_name_escaped = html.escape(user_name)
         
         search_data = session['last_search']
         products = search_data.get('products', [])
@@ -642,20 +647,20 @@ def results_page():
             if not product:
                 continue
             
-            badge = f'<div style="position: absolute; top: 8px; right: 8px; background: {colors[min(i, 2)]}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">{badges[min(i, 2)]}</div>' if i < 3 else ''
+            badge = '<div style="position: absolute; top: 8px; right: 8px; background: ' + colors[min(i, 2)] + '; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">' + badges[min(i, 2)] + '</div>' if i < 3 else ''
             
             title = html.escape(str(product.get('title', 'Producto')))
             price = html.escape(str(product.get('price', '$0.00')))
             source = html.escape(str(product.get('source', 'Tienda')))
             link = html.escape(str(product.get('link', '#')))
             
-            products_html += f'''
+            products_html += '''
                 <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: white; position: relative; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
-                    {badge}
-                    <h3 style="color: #1a73e8; margin-bottom: 8px; font-size: 16px;">{title}</h3>
-                    <div style="font-size: 28px; color: #2e7d32; font-weight: bold; margin: 12px 0;">{price} <span style="font-size: 12px; color: #666;">🇺🇸</span></div>
-                    <p style="color: #666; margin-bottom: 12px; font-size: 14px;">🏪 {source}</p>
-                    <a href="{link}" target="_blank" rel="noopener noreferrer" style="background: #1a73e8; color: white; padding: 10px 16px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block; font-size: 14px;">🛒 Ver Producto</a>
+                    ''' + badge + '''
+                    <h3 style="color: #1a73e8; margin-bottom: 8px; font-size: 16px;">''' + title + '''</h3>
+                    <div style="font-size: 28px; color: #2e7d32; font-weight: bold; margin: 12px 0;">''' + price + ''' <span style="font-size: 12px; color: #666;">🇺🇸</span></div>
+                    <p style="color: #666; margin-bottom: 12px; font-size: 14px;">🏪 ''' + source + '''</p>
+                    <a href="''' + link + '''" target="_blank" rel="noopener noreferrer" style="background: #1a73e8; color: white; padding: 10px 16px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block; font-size: 14px;">🛒 Ver Producto</a>
                 </div>'''
         
         prices = [p.get('price_numeric', 0) for p in products if p.get('price_numeric', 0) > 0]
@@ -663,31 +668,31 @@ def results_page():
         if prices:
             min_price = min(prices)
             avg_price = sum(prices) / len(prices)
-            stats = f'''
+            stats = '''
                 <div style="background: #e8f5e8; border: 1px solid #4caf50; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
                     <h3 style="color: #2e7d32; margin-bottom: 8px;">⚡ Resultados optimizados 🇺🇸</h3>
-                    <p><strong>✅ {len(products)} productos encontrados</strong></p>
-                    <p><strong>💰 Mejor precio: ${min_price:.2f}</strong></p>
-                    <p><strong>📈 Precio promedio: ${avg_price:.2f}</strong></p>
-                    <p><strong>👤 Búsqueda de: {html.escape(user_name)}</strong></p>
+                    <p><strong>✅ ''' + str(len(products)) + ''' productos encontrados</strong></p>
+                    <p><strong>💰 Mejor precio: $''' + f'{min_price:.2f}' + '''</strong></p>
+                    <p><strong>📈 Precio promedio: $''' + f'{avg_price:.2f}' + '''</strong></p>
+                    <p><strong>👤 Búsqueda de: ''' + user_name_escaped + '''</strong></p>
                 </div>'''
         
-        content = f'''
+        content = '''
         <div style="max-width: 800px; margin: 0 auto;">
             <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
-                <span style="color: white; font-size: 14px;">🚀 Render.com | 👋 <strong>{html.escape(user_name)}</strong> | 
-                <a href="{url_for('auth_logout')}" style="color: #50E3C2;">🚪 Salir</a> | 
-                <a href="{url_for('search_page')}" style="color: #50E3C2;">🔍 Nueva Búsqueda</a></span>
+                <span style="color: white; font-size: 14px;">🚀 Render.com | 👋 <strong>''' + user_name_escaped + '''</strong> | 
+                <a href="''' + url_for('auth_logout') + '''" style="color: #50E3C2;">🚪 Salir</a> | 
+                <a href="''' + url_for('search_page') + '''" style="color: #50E3C2;">🔍 Nueva Búsqueda</a></span>
             </div>
             
-            <h1 style="color: white; text-align: center; margin-bottom: 8px;">🇺🇸 Resultados: "{query}"</h1>
+            <h1 style="color: white; text-align: center; margin-bottom: 8px;">🇺🇸 Resultados: "''' + query + '''"</h1>
             <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">⚡ Búsqueda completada</p>
             
-            {stats}
-            {products_html}
+            ''' + stats + '''
+            ''' + products_html + '''
         </div>'''
         
-        return render_page('Resultados - Price Finder USA', content)
+        return render_template_string(render_page('Resultados - Price Finder USA', content))
     except Exception as e:
         print(f"Results page error: {e}")
         flash('Error al mostrar resultados.', 'danger')
