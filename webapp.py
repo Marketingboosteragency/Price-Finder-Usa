@@ -153,6 +153,73 @@ class PriceFinder:
         
         return found_specs
     
+    def _get_valid_link(self, item):
+        """Genera un link válido para el producto"""
+        if not item:
+            return "#"
+        
+        # Prioridad 1: Link directo del producto
+        product_link = item.get('product_link', '')
+        if product_link and self._is_valid_url(product_link):
+            return product_link
+        
+        # Prioridad 2: Link general del item
+        general_link = item.get('link', '')
+        if general_link and self._is_valid_url(general_link):
+            # Limpiar redirects de Google
+            if 'url=' in general_link:
+                try:
+                    clean_link = unquote(general_link.split('url=')[1].split('&')[0])
+                    if self._is_valid_url(clean_link):
+                        return clean_link
+                except:
+                    pass
+            return general_link
+        
+        # Prioridad 3: Generar link de búsqueda específico
+        title = item.get('title', '')
+        source = item.get('source', '')
+        
+        if title:
+            # Links específicos por tienda
+            if 'amazon' in source.lower():
+                search_query = quote_plus(str(title))
+                return f"https://www.amazon.com/s?k={search_query}&ref=nb_sb_noss"
+            elif 'walmart' in source.lower():
+                search_query = quote_plus(str(title))
+                return f"https://www.walmart.com/search?q={search_query}"
+            elif 'target' in source.lower():
+                search_query = quote_plus(str(title))
+                return f"https://www.target.com/s?searchTerm={search_query}"
+            elif 'bestbuy' in source.lower() or 'best buy' in source.lower():
+                search_query = quote_plus(str(title))
+                return f"https://www.bestbuy.com/site/searchpage.jsp?st={search_query}"
+            elif 'ebay' in source.lower():
+                search_query = quote_plus(str(title))
+                return f"https://www.ebay.com/sch/i.html?_nkw={search_query}"
+            elif 'homedepot' in source.lower() or 'home depot' in source.lower():
+                search_query = quote_plus(str(title))
+                return f"https://www.homedepot.com/s/{search_query}"
+            elif 'lowes' in source.lower():
+                search_query = quote_plus(str(title))
+                return f"https://www.lowes.com/search?searchTerm={search_query}"
+            else:
+                # Link genérico de Google Shopping
+                search_query = quote_plus(str(title))
+                return f"https://www.google.com/search?tbm=shop&q={search_query}"
+        
+        return "#"
+    
+    def _is_valid_url(self, url):
+        """Verifica si una URL es válida"""
+        if not url or url == "#":
+            return False
+        try:
+            parsed = urlparse(str(url))
+            return bool(parsed.scheme in ['http', 'https'] and parsed.netloc)
+        except:
+            return False
+    
     def _build_queries(self, query):
         """Construcción optimizada de consultas"""
         # Máximo 2 consultas para evitar timeouts
