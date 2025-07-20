@@ -437,7 +437,7 @@ def index():
     # Usar concatenación normal en lugar de f-string para evitar conflictos con Jinja2
     content = '''
     <div class="container">
-        <div class="user-info">👋 ¡Hola, <strong>''' + user_name_escaped + '''</strong>! | <a href="''' + url_for('auth_logout') + '''">🚪 Cerrar Sesión</a></div>
+        <div class="user-info">Hola, <strong>''' + user_name_escaped + '''</strong>! | <a href="''' + url_for('auth_logout') + '''">Cerrar Sesion</a></div>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
@@ -447,26 +447,26 @@ def index():
             {% endif %}
         {% endwith %}
         
-        <h1>🇺🇸 Price Finder USA</h1>
-        <p class="subtitle">⚡ Búsquedas ultra rápidas - Solo tiendas de EE.UU.</p>
+        <h1>Price Finder USA</h1>
+        <p class="subtitle">Busquedas ultra rapidas - Solo tiendas de EE.UU.</p>
         <form id="setupForm">
-            <label for="apiKey">🔑 API Key de SerpAPI:</label>
-            <input type="text" id="apiKey" placeholder="Pega aquí tu API key..." required>
-            <button type="submit">✅ Configurar y Continuar</button>
+            <label for="apiKey">API Key de SerpAPI:</label>
+            <input type="text" id="apiKey" placeholder="Pega aqui tu API key..." required>
+            <button type="submit">Configurar y Continuar</button>
         </form>
         <div class="features">
-            <h3>⚡ Sistema optimizado:</h3>
+            <h3>Sistema optimizado:</h3>
             <ul>
-                <li>Búsquedas ultra rápidas (menos de 10 segundos)</li>
+                <li>Busquedas ultra rapidas (menos de 10 segundos)</li>
                 <li>Cache inteligente optimizado</li>
                 <li>SOLO tiendas estadounidenses</li>
-                <li>🔐 Firebase Auth integrado</li>
-                <li>🚀 SSL automático incluido</li>
+                <li>Firebase Auth integrado</li>
+                <li>SSL automatico incluido</li>
             </ul>
-            <p style="margin-top: 12px; font-size: 13px;"><strong>¿No tienes API key?</strong> <a href="https://serpapi.com/" target="_blank" style="color: #1a73e8;">Obtén una gratis</a></p>
+            <p style="margin-top: 12px; font-size: 13px;"><strong>No tienes API key?</strong> <a href="https://serpapi.com/" target="_blank" style="color: #1a73e8;">Obten una gratis</a></p>
         </div>
         <div id="error" class="error"></div>
-        <div id="loading" class="loading"><div class="spinner"></div><p>⚡ Validando API key...</p></div>
+        <div id="loading" class="loading"><div class="spinner"></div><p>Validando API key...</p></div>
     </div>
     <script>
         document.getElementById('setupForm').addEventListener('submit', function(e) {
@@ -484,13 +484,13 @@ def index():
             })
             .then(response => { clearTimeout(timeoutId); return response.json(); })
             .then(data => { hideLoading(); data.success ? window.location.href = '/search' : showError(data.error); })
-            .catch(() => { clearTimeout(timeoutId); hideLoading(); showError('Error de conexión'); });
+            .catch(() => { clearTimeout(timeoutId); hideLoading(); showError('Error de conexion'); });
         });
         function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
         function hideLoading() { document.getElementById('loading').style.display = 'none'; }
         function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
     </script>'''
-    return render_template_string(render_page('🚀 Price Finder USA', content))
+    return render_template_string(render_page('Price Finder USA', content))
 
 @app.route('/setup', methods=['POST'])
 @login_required
@@ -525,26 +525,26 @@ def search_page():
     
     content = '''
     <div class="container">
-        <div class="user-info">👋 <strong>''' + user_name_escaped + '''</strong> | <a href="''' + url_for('auth_logout') + '''">🚪 Salir</a> | <a href="''' + url_for('index') + '''">🏠 Inicio</a></div>
+        <div class="user-info"><strong>''' + user_name_escaped + '''</strong> | <a href="''' + url_for('auth_logout') + '''">Salir</a> | <a href="''' + url_for('index') + '''">Inicio</a></div>
         
-        <h1>🔍 Buscar Productos</h1>
-        <p class="subtitle">⚡ Resultados en 10 segundos</p>
+        <h1>Buscar Productos</h1>
+        <p class="subtitle">Resultados en 10 segundos</p>
         <form id="searchForm">
             <div class="search-bar">
                 <input type="text" id="searchQuery" placeholder="Busca cualquier producto..." required>
-                <button type="submit">🎯 Buscar</button>
+                <button type="submit">Buscar</button>
             </div>
         </form>
         <div class="tips">
-            <h4>⚡ Sistema optimizado:</h4>
+            <h4>Sistema optimizado:</h4>
             <ul style="margin: 8px 0 0 15px; font-size: 13px;">
                 <li><strong>Velocidad:</strong> Resultados en menos de 10 segundos</li>
-                <li><strong>🇺🇸 USA:</strong> Amazon, Walmart, Target, Best Buy</li>
-                <li><strong>🚫 Filtrado:</strong> Sin Alibaba, Temu, AliExpress</li>
-                <li><strong>🔐 Seguro:</strong> Autenticado con Firebase</li>
+                <li><strong>USA:</strong> Amazon, Walmart, Target, Best Buy</li>
+                <li><strong>Filtrado:</strong> Sin Alibaba, Temu, AliExpress</li>
+                <li><strong>Seguro:</strong> Autenticado con Firebase</li>
             </ul>
         </div>
-        <div id="loading" class="loading"><div class="spinner"></div><h3>⚡ Buscando productos...</h3><p>Máximo 10 segundos</p></div>
+        <div id="loading" class="loading"><div class="spinner"></div><h3>Buscando productos...</h3><p>Maximo 10 segundos</p></div>
         <div id="error" class="error"></div>
     </div>
     <script>
@@ -557,7 +557,7 @@ def search_page():
             
             searching = true;
             showLoading();
-            const timeoutId = setTimeout(() => { searching = false; hideLoading(); showError('Búsqueda muy lenta - Intenta de nuevo'); }, 15000);
+            const timeoutId = setTimeout(() => { searching = false; hideLoading(); showError('Busqueda muy lenta - Intenta de nuevo'); }, 15000);
             
             fetch('/api/search', {
                 method: 'POST',
@@ -566,13 +566,13 @@ def search_page():
             })
             .then(response => { clearTimeout(timeoutId); searching = false; return response.json(); })
             .then(data => { hideLoading(); data.success ? window.location.href = '/results' : showError(data.error); })
-            .catch(() => { clearTimeout(timeoutId); searching = false; hideLoading(); showError('Error de conexión'); });
+            .catch(() => { clearTimeout(timeoutId); searching = false; hideLoading(); showError('Error de conexion'); });
         });
         function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
         function hideLoading() { document.getElementById('loading').style.display = 'none'; }
         function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
     </script>'''
-    return render_template_string(render_page('Búsqueda', content))
+    return render_template_string(render_page('Busqueda', content))
 
 @app.route('/api/search', methods=['POST'])
 @login_required
