@@ -1,19 +1,42 @@
-# app.py - Price Finder USA con Firebase Auth y SerpAPI desde Environment
+# app.py - Price Finder USA con Firebase Auth, SerpAPI y Búsqueda por Imagen
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template_string, flash
 import requests
 import os
 import re
 import html
 import time
+import io
 from datetime import datetime
 from urllib.parse import urlparse, quote_plus
 from functools import wraps
+from PIL import Image
+from typing import Optional
+
+# Imports para Gemini (Búsqueda por Imagen)
+try:
+    import google.generativeai as genai
+    from google.api_core import exceptions as google_exceptions
+    print("✅ Google Generative AI (Gemini) importado correctamente")
+except ImportError:
+    print("⚠️ AVISO: 'google-generativeai' no está instalado.")
+    genai = None
+    google_exceptions = None
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'fallback-key-change-in-production')
 app.config['PERMANENT_SESSION_LIFETIME'] = 1800
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SECURE'] = True if os.environ.get('RENDER') else False
+
+# Configuración de Gemini para búsqueda por imagen
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+if genai and GEMINI_API_KEY:
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        print("✅ API de Google Generative AI (Gemini) configurada.")
+    except Exception as e:
+        print(f"❌ ERROR al configurar API de Gemini: {e}")
+        genai = None
 
 # Firebase Auth Class
 class FirebaseAuth:
@@ -110,7 +133,103 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# Price Finder Class - MODIFICADO para usar variable de entorno con fallbacks
+# ==============================================================================
+# FUNCIONES DE BÚSQUEDA POR IMAGEN CON GEMINI
+# ==============================================================================
+
+def analyze_image_with_gemini(image_content: bytes) -> Optional[str]:
+    """
+    Analiza una imagen usando Gemini Vision y genera una consulta de búsqueda para productos.
+    """
+    if not genai or not image_content:
+        print("❌ Gemini no disponible o imagen vacía")
+        return None
+    
+    try:
+        # Convertir bytes a objeto PIL Image
+        image = Image.open(io.BytesIO(image_content))
+        
+        # Redimensionar imagen si es muy grande (optimización)
+        max_size = (1024, 1024)
+        if image.size[0] > max_size[0] or image.size[1] > max_size[1]:
+            image.thumbnail(max_size, Image.Resampling.LANCZOS)
+        
+        # Convertir a RGB si es necesario
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        print("🖼️ Analizando imagen con Gemini Vision...")
+        
+        # Prompt especializado para identificar productos
+        prompt = """
+        Analiza esta imagen y describe detalladamente el producto principal que se muestra.
+        
+        Enfócate en:
+        - Nombre específico del producto
+        - Marca (si es visible)
+        - Modelo o número de referencia
+        - Color, tamaño, características distintivas
+        - Categoría del producto
+        
+        Genera una consulta de búsqueda en inglés, precisa y específica que alguien usaría 
+        para encontrar este producto exacto en una tienda online.
+        
+        Responde SOLO con la consulta de búsqueda, sin explicaciones adicionales.
+        Ejemplo de respuesta: "blue nike air max 270 sneakers size 10"
+        """
+        
+        # Usar el modelo Gemini Pro Vision
+        model = genai.GenerativeModel('gemini-1.5-pro-latest')
+        response = model.generate_content([prompt, image])
+        
+        if response.text:
+            search_query = response.text.strip()
+            print(f"🧠 Consulta generada desde imagen: '{search_query}'")
+            return search_query
+        else:
+            print("❌ No se pudo generar consulta desde la imagen")
+            return None
+            
+    except google_exceptions.ResourceExhausted as e:
+        print("❌ Cuota de API de Gemini agotada")
+        return None
+    except Exception as e:
+        print(f"❌ Error al analizar imagen: {e}")
+        return None
+
+def process_image_search(image_content: bytes, fallback_query: str = "") -> str:
+    """
+    Procesa una búsqueda por imagen y retorna la consulta optimizada.
+    """
+    # Intentar analizar la imagen primero
+    image_query = analyze_image_with_gemini(image_content)
+    
+    if image_query:
+        return image_query
+    elif fallback_query:
+        print(f"⚠️ Usando consulta de respaldo: '{fallback_query}'")
+        return fallback_query
+    else:
+        print("❌ No se pudo procesar la imagen ni hay consulta de respaldo")
+        return "product search"
+
+def validate_image(image_content: bytes) -> bool:
+    """
+    Valida que el contenido sea una imagen válida.
+    """
+    try:
+        image = Image.open(io.BytesIO(image_content))
+        # Verificar que tenga dimensiones válidas
+        if image.size[0] < 10 or image.size[1] < 10:
+            return False
+        # Verificar formato soportado
+        if image.format not in ['JPEG', 'PNG', 'GIF', 'BMP', 'WEBP']:
+            return False
+        return True
+    except Exception:
+        return False
+
+# Price Finder Class - MODIFICADO para integrar búsqueda por imagen
 class PriceFinder:
     def __init__(self):
         # Intentar multiples nombres de variables de entorno comunes
@@ -254,34 +373,86 @@ class PriceFinder:
                 continue
         return products
     
-    def search_products(self, query):
-        if not query or len(query) < 2:
+    def search_products(self, query=None, image_content=None):
+        """
+        Búsqueda de productos mejorada con soporte para imágenes.
+        """
+        # Determinar la consulta final
+        final_query = None
+        search_source = "text"
+        
+        if image_content and not query:
+            # Solo imagen, sin texto
+            if validate_image(image_content):
+                final_query = process_image_search(image_content)
+                search_source = "image"
+                print(f"🖼️ Búsqueda basada en imagen: '{final_query}'")
+            else:
+                print("❌ Imagen inválida")
+                return self._get_examples("producto")
+                
+        elif image_content and query:
+            # Imagen + texto: combinar ambos
+            if validate_image(image_content):
+                image_query = analyze_image_with_gemini(image_content)
+                if image_query:
+                    final_query = f"{query} {image_query}"
+                    search_source = "combined"
+                    print(f"🔗 Búsqueda combinada: '{final_query}'")
+                else:
+                    final_query = query
+                    search_source = "text_fallback"
+                    print(f"📝 Usando solo texto (imagen falló): '{final_query}'")
+            else:
+                final_query = query
+                search_source = "text_invalid_image"
+                print(f"📝 Imagen inválida, usando solo texto: '{final_query}'")
+                
+        elif query and not image_content:
+            # Solo texto
+            final_query = query.strip()
+            search_source = "text"
+            print(f"📝 Búsqueda basada en texto: '{final_query}'")
+            
+        else:
+            print("❌ No se proporcionó ni consulta ni imagen")
             return self._get_examples("producto")
         
+        # Validar consulta final
+        if not final_query or len(final_query) < 2:
+            return self._get_examples("producto")
+        
+        # Continuar con la lógica de búsqueda existente usando final_query
         if not self.api_key:
             print("Sin API key - usando ejemplos")
-            return self._get_examples(query)
+            return self._get_examples(final_query)
         
-        cache_key = f"search_{hash(query.lower())}"
+        cache_key = f"search_{hash(final_query.lower())}_{search_source}"
         if cache_key in self.cache:
             cache_data, timestamp = self.cache[cache_key]
             if (time.time() - timestamp) < self.cache_ttl:
+                print(f"📋 Usando cache para: {final_query}")
                 return cache_data
         
         start_time = time.time()
         all_products = []
         
         if time.time() - start_time < 8:
-            query_optimized = f'"{query}" buy online'
+            query_optimized = f'"{final_query}" buy online'
             data = self._make_api_request('google_shopping', query_optimized)
             products = self._process_results(data, 'google_shopping')
             all_products.extend(products)
         
         if not all_products:
-            all_products = self._get_examples(query)
+            all_products = self._get_examples(final_query)
         
         all_products.sort(key=lambda x: x['price_numeric'])
         final_products = all_products[:6]
+        
+        # Añadir información sobre el tipo de búsqueda
+        for product in final_products:
+            product['search_source'] = search_source
+            product['original_query'] = query if query else "imagen"
         
         self.cache[cache_key] = (final_products, time.time())
         if len(self.cache) > 10:
@@ -312,7 +483,8 @@ class PriceFinder:
                 'link': link,
                 'rating': ['4.5', '4.2', '4.0'][i],
                 'reviews': ['500', '300', '200'][i],
-                'image': ''
+                'image': '',
+                'search_source': 'example'
             })
         return examples
 
@@ -356,6 +528,14 @@ def render_page(title, content):
         .flash.success { background-color: #d4edda; color: #155724; }
         .flash.danger { background-color: #f8d7da; color: #721c24; }
         .flash.warning { background-color: #fff3cd; color: #856404; }
+        .image-upload { background: #f8f9fa; border: 2px dashed #dee2e6; border-radius: 8px; padding: 20px; text-align: center; margin: 15px 0; }
+        .image-upload input[type="file"] { display: none; }
+        .image-upload label { cursor: pointer; color: #1a73e8; font-weight: 600; }
+        .image-upload:hover { border-color: #1a73e8; background: #e3f2fd; }
+        .image-preview { max-width: 150px; max-height: 150px; margin: 10px auto; border-radius: 8px; display: none; }
+        .or-divider { text-align: center; margin: 20px 0; color: #666; font-weight: 600; position: relative; }
+        .or-divider:before { content: ''; position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: #dee2e6; z-index: 1; }
+        .or-divider span { background: white; padding: 0 15px; position: relative; z-index: 2; }
     </style>
 </head>
 <body>''' + content + '''</body>
@@ -472,6 +652,9 @@ def search_page():
     user_name = current_user['user_name'] if current_user else 'Usuario'
     user_name_escaped = html.escape(user_name)
     
+    # Verificar si Gemini está disponible para mostrar opción de imagen
+    gemini_available = "true" if genai else "false"
+    
     content = '''
     <div class="container">
         <div class="user-info">
@@ -491,85 +674,195 @@ def search_page():
         {% endwith %}
         
         <h1>Buscar Productos</h1>
-        <p class="subtitle">Resultados en 15 segundos</p>
-        <form id="searchForm">
+        <p class="subtitle">Búsqueda por texto o imagen - Resultados en 15 segundos</p>
+        
+        <form id="searchForm" enctype="multipart/form-data">
             <div class="search-bar">
-                <input type="text" id="searchQuery" placeholder="Busca cualquier producto..." required>
+                <input type="text" id="searchQuery" name="query" placeholder="Busca cualquier producto...">
                 <button type="submit">Buscar</button>
             </div>
+            
+            <div class="or-divider">
+                <span>O</span>
+            </div>
+            
+            <div class="image-upload" id="imageUpload">
+                <input type="file" id="imageFile" name="image_file" accept="image/*">
+                <label for="imageFile">
+                    📷 Sube una imagen del producto
+                    <br><small>JPG, PNG, GIF hasta 10MB</small>
+                </label>
+                <img id="imagePreview" class="image-preview" src="#" alt="Vista previa">
+            </div>
         </form>
+        
         <div class="tips">
-            <h4>Sistema optimizado:</h4>
+            <h4>Sistema optimizado ''' + ("+ Búsqueda por Imagen:" if genai else ":") + '''</h4>
             <ul style="margin: 8px 0 0 15px; font-size: 13px;">
                 <li><strong>Velocidad:</strong> Resultados en menos de 15 segundos</li>
                 <li><strong>USA:</strong> Amazon, Walmart, Target, Best Buy</li>
-                <li><strong>Filtrado:</strong> Sin Alibaba, Temu, AliExpress</li>
+                <li><strong>Filtrado:</strong> Sin Alibaba, Temu, AliExpress</li>''' + '''
+                <li><strong>Imagen:</strong> Identifica productos automáticamente</li>''' if genai else '' + '''
             </ul>
         </div>
-        <div id="loading" class="loading"><div class="spinner"></div><h3>Buscando productos...</h3><p>Maximo 15 segundos</p></div>
+        
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <h3>Buscando productos...</h3>
+            <p id="loadingText">Maximo 15 segundos</p>
+        </div>
         <div id="error" class="error"></div>
     </div>
+    
     <script>
         let searching = false;
+        const geminiAvailable = ''' + gemini_available + ''';
+        
+        // Manejo de vista previa de imagen
+        document.getElementById('imageFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const preview = document.getElementById('imagePreview');
+            
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    preview.src = e.target.result;
+                    preview.style.display = 'block';
+                    // Limpiar texto si hay imagen
+                    document.getElementById('searchQuery').value = '';
+                }
+                reader.readAsDataURL(file);
+            } else {
+                preview.style.display = 'none';
+            }
+        });
+        
         document.getElementById('searchForm').addEventListener('submit', function(e) {
             e.preventDefault();
             if (searching) return;
+            
             const query = document.getElementById('searchQuery').value.trim();
-            if (!query) return showError('Por favor ingresa un producto');
+            const imageFile = document.getElementById('imageFile').files[0];
+            
+            if (!query && !imageFile) {
+                return showError('Por favor ingresa un producto o sube una imagen');
+            }
             
             searching = true;
-            showLoading();
-            const timeoutId = setTimeout(() => { searching = false; hideLoading(); showError('Busqueda muy lenta - Intenta de nuevo'); }, 15000);
+            showLoading(imageFile ? '🖼️ Analizando imagen...' : 'Buscando productos...');
+            
+            const timeoutId = setTimeout(() => { 
+                searching = false; 
+                hideLoading(); 
+                showError('Busqueda muy lenta - Intenta de nuevo'); 
+            }, 20000);
+            
+            const formData = new FormData();
+            if (query) formData.append('query', query);
+            if (imageFile) formData.append('image_file', imageFile);
             
             fetch('/api/search', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({query: query})
+                body: formData
             })
-            .then(response => { clearTimeout(timeoutId); searching = false; return response.json(); })
-            .then(data => { hideLoading(); data.success ? window.location.href = '/results' : showError(data.error); })
-            .catch(() => { clearTimeout(timeoutId); searching = false; hideLoading(); showError('Error de conexion'); });
+            .then(response => { 
+                clearTimeout(timeoutId); 
+                searching = false; 
+                return response.json(); 
+            })
+            .then(data => { 
+                hideLoading(); 
+                if (data.success) {
+                    window.location.href = '/results';
+                } else {
+                    showError(data.error || 'Error en la búsqueda');
+                }
+            })
+            .catch(() => { 
+                clearTimeout(timeoutId); 
+                searching = false; 
+                hideLoading(); 
+                showError('Error de conexion'); 
+            });
         });
-        function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
+        
+        function showLoading(text = 'Buscando productos...') { 
+            document.getElementById('loadingText').textContent = text;
+            document.getElementById('loading').style.display = 'block'; 
+            document.getElementById('error').style.display = 'none'; 
+        }
         function hideLoading() { document.getElementById('loading').style.display = 'none'; }
-        function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
+        function showError(msg) { 
+            hideLoading(); 
+            const e = document.getElementById('error'); 
+            e.textContent = msg; 
+            e.style.display = 'block'; 
+        }
     </script>'''
     return render_template_string(render_page('Busqueda', content))
 
-# API SEARCH MODIFICADA - Sin depender de API key, usa ejemplos si no hay API
+# API SEARCH MODIFICADA - Con soporte para imágenes
 @app.route('/api/search', methods=['POST'])
 @login_required
 def api_search():
     try:
-        data = request.get_json()
-        query = data.get('query', '').strip() if data else ''
-        if not query:
-            return jsonify({'error': 'Consulta requerida'}), 400
+        # Obtener parámetros
+        query = request.form.get('query', '').strip() if request.form.get('query') else None
+        image_file = request.files.get('image_file')
         
-        if len(query) > 80:
+        # Procesar imagen si existe
+        image_content = None
+        if image_file and image_file.filename != '':
+            try:
+                image_content = image_file.read()
+                print(f"📷 Imagen recibida: {len(image_content)} bytes")
+                
+                # Validar tamaño (máximo 10MB)
+                if len(image_content) > 10 * 1024 * 1024:
+                    return jsonify({'error': 'La imagen es demasiado grande (máximo 10MB)'}), 400
+                    
+            except Exception as e:
+                print(f"❌ Error al leer imagen: {e}")
+                return jsonify({'error': 'Error al procesar la imagen'}), 400
+        
+        # Validar que hay al menos una entrada
+        if not query and not image_content:
+            return jsonify({'error': 'Debe proporcionar una consulta o una imagen'}), 400
+        
+        # Limitar longitud de query
+        if query and len(query) > 80:
             query = query[:80]
         
         user_email = session.get('user_email', 'Unknown')
-        print(f"Search request from {user_email}: {query}")
+        search_type = "imagen" if image_content and not query else "texto+imagen" if image_content and query else "texto"
+        print(f"Search request from {user_email}: {search_type}")
         
-        products = price_finder.search_products(query)
+        # Realizar búsqueda con soporte para imagen
+        products = price_finder.search_products(query=query, image_content=image_content)
         
         session['last_search'] = {
-            'query': query,
+            'query': query or "búsqueda por imagen",
             'products': products,
             'timestamp': datetime.now().isoformat(),
-            'user': user_email
+            'user': user_email,
+            'search_type': search_type
         }
         
-        print(f"Search completed for {user_email}: {len(products)} products found")
+        print(f"Search completed for {user_email}: {len(products)} products found ({search_type})")
         return jsonify({'success': True, 'products': products, 'total': len(products)})
         
     except Exception as e:
         print(f"Search error: {e}")
         try:
-            query = request.get_json().get('query', 'producto') if request.get_json() else 'producto'
-            fallback = price_finder._get_examples(query)
-            session['last_search'] = {'query': str(query), 'products': fallback, 'timestamp': datetime.now().isoformat()}
+            # Fallback en caso de error
+            fallback_query = request.form.get('query', 'producto') if request.form.get('query') else 'producto'
+            fallback = price_finder._get_examples(fallback_query)
+            session['last_search'] = {
+                'query': str(fallback_query), 
+                'products': fallback, 
+                'timestamp': datetime.now().isoformat(),
+                'search_type': 'fallback'
+            }
             return jsonify({'success': True, 'products': fallback, 'total': len(fallback)})
         except:
             return jsonify({'error': 'Error interno del servidor'}), 500
@@ -589,6 +882,7 @@ def results_page():
         search_data = session['last_search']
         products = search_data.get('products', [])
         query = html.escape(str(search_data.get('query', 'busqueda')))
+        search_type = search_data.get('search_type', 'texto')
         
         products_html = ""
         badges = ['MEJOR', '2do', '3ro']
@@ -600,6 +894,13 @@ def results_page():
             
             badge = '<div style="position: absolute; top: 8px; right: 8px; background: ' + colors[min(i, 2)] + '; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">' + badges[min(i, 2)] + '</div>' if i < 3 else ''
             
+            # Añadir badge de fuente de búsqueda
+            search_source_badge = ''
+            if product.get('search_source') == 'image':
+                search_source_badge = '<div style="position: absolute; top: 8px; left: 8px; background: #673ab7; color: white; padding: 4px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">📷 IMAGEN</div>'
+            elif product.get('search_source') == 'combined':
+                search_source_badge = '<div style="position: absolute; top: 8px; left: 8px; background: #607d8b; color: white; padding: 4px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">🔗 MIXTO</div>'
+            
             title = html.escape(str(product.get('title', 'Producto')))
             price = html.escape(str(product.get('price', '$0.00')))
             source = html.escape(str(product.get('source', 'Tienda')))
@@ -608,7 +909,8 @@ def results_page():
             products_html += '''
                 <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: white; position: relative; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
                     ''' + badge + '''
-                    <h3 style="color: #1a73e8; margin-bottom: 8px; font-size: 16px;">''' + title + '''</h3>
+                    ''' + search_source_badge + '''
+                    <h3 style="color: #1a73e8; margin-bottom: 8px; font-size: 16px; margin-top: ''' + ('20px' if search_source_badge else '0') + ';">''' + title + '''</h3>
                     <div style="font-size: 28px; color: #2e7d32; font-weight: bold; margin: 12px 0;">''' + price + ''' <span style="font-size: 12px; color: #666;">USD</span></div>
                     <p style="color: #666; margin-bottom: 12px; font-size: 14px;">Tienda: ''' + source + '''</p>
                     <a href="''' + link + '''" target="_blank" rel="noopener noreferrer" style="background: #1a73e8; color: white; padding: 10px 16px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block; font-size: 14px;">Ver Producto</a>
@@ -619,9 +921,10 @@ def results_page():
         if prices:
             min_price = min(prices)
             avg_price = sum(prices) / len(prices)
+            search_type_text = {"texto": "texto", "imagen": "imagen", "texto+imagen": "texto + imagen", "combined": "búsqueda mixta", "fallback": "búsqueda de respaldo"}.get(search_type, search_type)
             stats = '''
                 <div style="background: #e8f5e8; border: 1px solid #4caf50; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <h3 style="color: #2e7d32; margin-bottom: 8px;">Resultados de busqueda</h3>
+                    <h3 style="color: #2e7d32; margin-bottom: 8px;">Resultados de búsqueda (''' + search_type_text + ''')</h3>
                     <p><strong>''' + str(len(products)) + ''' productos encontrados</strong></p>
                     <p><strong>Mejor precio: $''' + f'{min_price:.2f}' + '''</strong></p>
                     <p><strong>Precio promedio: $''' + f'{avg_price:.2f}' + '''</strong></p>
@@ -657,7 +960,8 @@ def health_check():
             'status': 'OK', 
             'timestamp': datetime.now().isoformat(),
             'firebase_auth': 'enabled' if firebase_auth.firebase_web_api_key else 'disabled',
-            'serpapi': 'enabled' if price_finder.is_api_configured() else 'disabled'
+            'serpapi': 'enabled' if price_finder.is_api_configured() else 'disabled',
+            'gemini_vision': 'enabled' if genai else 'disabled'
         })
     except Exception as e:
         return jsonify({'status': 'ERROR', 'message': str(e)}), 500
@@ -695,9 +999,10 @@ def internal_error(error):
     return '<h1>500 - Error interno</h1><p><a href="/">Volver al inicio</a></p>', 500
 
 if __name__ == '__main__':
-    print("Price Finder USA - Starting...")
+    print("Price Finder USA con Búsqueda por Imagen - Starting...")
     print(f"Firebase: {'OK' if os.environ.get('FIREBASE_WEB_API_KEY') else 'NOT_CONFIGURED'}")
     print(f"SerpAPI: {'OK' if os.environ.get('SERPAPI_KEY') else 'NOT_CONFIGURED'}")
+    print(f"Gemini Vision: {'OK' if os.environ.get('GEMINI_API_KEY') else 'NOT_CONFIGURED'}")
     print(f"Puerto: {os.environ.get('PORT', '5000')}")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False, threaded=True)
 else:
