@@ -630,7 +630,7 @@ def results_page():
         content = '''
         <div style="max-width: 800px; margin: 0 auto;">
             <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center; display: flex; align-items: center; justify-content: center;">
-                <span style="color: white; font-size: 14px;">Hola <strong>''' + user_name_escaped + '''</strong></span>
+                <span style="color: white; font-size: 14px;"><strong>''' + user_name_escaped + '''</strong></span>
                 <div style="margin-left: 15px;">
                     <a href="''' + url_for('auth_logout') + '''" style="background: rgba(220,53,69,0.9); color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px; margin-right: 8px;">Salir</a>
                     <a href="''' + url_for('search_page') + '''" style="background: rgba(40,167,69,0.9); color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px;">Nueva Busqueda</a>
