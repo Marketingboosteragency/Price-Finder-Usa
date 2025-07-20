@@ -1,105 +1,143 @@
-from flask import Flask, request, jsonify, session, redirect, url_for
+# app.py - Price Finder USA con Firebase Auth (Versión Compacta para Render)
+from flask import Flask, request, jsonify, session, redirect, url_for, render_template_string, flash
 import requests
 import os
 import re
 import html
 import time
 from datetime import datetime
-from urllib.parse import urlparse, unquote, quote_plus
+from urllib.parse import urlparse, quote_plus
+from functools import wraps
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
-
-# Configuración optimizada para evitar timeouts
-app.config['PERMANENT_SESSION_LIFETIME'] = 1800  # 30 minutos
+app.secret_key = os.environ.get('SECRET_KEY', 'fallback-key-change-in-production')
+app.config['PERMANENT_SESSION_LIFETIME'] = 1800
 app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SECURE'] = True if os.environ.get('RENDER') else False
 
+# Firebase Auth Class
+class FirebaseAuth:
+    def __init__(self):
+        self.firebase_web_api_key = os.environ.get("FIREBASE_WEB_API_KEY")
+        if not self.firebase_web_api_key:
+            print("⚠️ FIREBASE_WEB_API_KEY no configurada")
+        else:
+            print("✅ Firebase Auth configurado")
+    
+    def login_user(self, email, password):
+        if not self.firebase_web_api_key:
+            return {'success': False, 'message': 'Servicio no configurado', 'user_data': None, 'error_code': 'SERVICE_NOT_CONFIGURED'}
+        
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={self.firebase_web_api_key}"
+        payload = {'email': email, 'password': password, 'returnSecureToken': True}
+        
+        try:
+            response = requests.post(url, json=payload, timeout=8)
+            response.raise_for_status()
+            user_data = response.json()
+            
+            return {
+                'success': True,
+                'message': '¡Bienvenido! Has iniciado sesión correctamente.',
+                'user_data': {
+                    'user_id': user_data['localId'],
+                    'email': user_data['email'],
+                    'display_name': user_data.get('displayName', email.split('@')[0]),
+                    'id_token': user_data['idToken']
+                },
+                'error_code': None
+            }
+        except requests.exceptions.HTTPError as e:
+            try:
+                error_msg = e.response.json().get('error', {}).get('message', 'ERROR')
+                if 'INVALID' in error_msg or 'EMAIL_NOT_FOUND' in error_msg:
+                    return {'success': False, 'message': 'Correo o contraseña incorrectos', 'user_data': None, 'error_code': 'INVALID_CREDENTIALS'}
+                elif 'TOO_MANY_ATTEMPTS' in error_msg:
+                    return {'success': False, 'message': 'Demasiados intentos fallidos', 'user_data': None, 'error_code': 'TOO_MANY_ATTEMPTS'}
+                else:
+                    return {'success': False, 'message': 'Error de autenticación', 'user_data': None, 'error_code': 'FIREBASE_ERROR'}
+            except:
+                return {'success': False, 'message': 'Error de conexión', 'user_data': None, 'error_code': 'CONNECTION_ERROR'}
+        except Exception as e:
+            print(f"Firebase auth error: {e}")
+            return {'success': False, 'message': 'Error interno del servidor', 'user_data': None, 'error_code': 'UNEXPECTED_ERROR'}
+    
+    def set_user_session(self, user_data):
+        session['user_id'] = user_data['user_id']
+        session['user_name'] = user_data['display_name']
+        session['user_email'] = user_data['email']
+        session['id_token'] = user_data['id_token']
+        session['login_time'] = datetime.now().isoformat()
+        session.permanent = True
+    
+    def clear_user_session(self):
+        important_data = {key: session.get(key) for key in ['api_key', 'timestamp'] if key in session}
+        session.clear()
+        for key, value in important_data.items():
+            session[key] = value
+    
+    def is_user_logged_in(self):
+        if 'user_id' not in session or session['user_id'] is None:
+            return False
+        if 'login_time' in session:
+            try:
+                login_time = datetime.fromisoformat(session['login_time'])
+                time_diff = (datetime.now() - login_time).total_seconds()
+                if time_diff > 7200:  # 2 horas máximo
+                    return False
+            except:
+                pass
+        return True
+    
+    def get_current_user(self):
+        if not self.is_user_logged_in():
+            return None
+        return {
+            'user_id': session.get('user_id'),
+            'user_name': session.get('user_name'),
+            'user_email': session.get('user_email'),
+            'id_token': session.get('id_token')
+        }
+
+firebase_auth = FirebaseAuth()
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not firebase_auth.is_user_logged_in():
+            flash('Tu sesión ha expirado. Inicia sesión nuevamente.', 'warning')
+            return redirect(url_for('auth_login_page'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# Price Finder Class
 class PriceFinder:
     def __init__(self, api_key):
         self.api_key = api_key
         self.base_url = "https://serpapi.com/search"
-        self.max_concurrent_requests = 2  # Limitar requests concurrentes
-        self.request_delay = 0.5  # Delay entre requests
-        
-        # Configuración de timeouts optimizada
-        self.timeouts = {
-            'connect': 5,    # Timeout de conexión
-            'read': 10,      # Timeout de lectura
-            'total': 15      # Timeout total máximo
-        }
-        
-        # Cache simple en memoria
         self.cache = {}
-        self.cache_ttl = 300  # 5 minutos
-        
-        # Palabras que indican productos comerciales
-        self.product_indicators = ['buy', 'price', 'sale', 'store', 'shop', 'amazon', 'walmart', 'ebay', 'best buy']
-        
-        # Palabras irrelevantes a filtrar
-        self.irrelevant_words = ['how to', 'tutorial', 'guide', 'wikipedia', 'definition', 'meaning', 'what is']
-        
-        # LISTA NEGRA - Tiendas NO estadounidenses (optimizada)
-        self.blacklisted_stores = [
-            'alibaba', 'aliexpress', 'temu', 'wish', 'banggood', 'dhgate',
-            'falabella', 'ripley', 'linio', 'mercadolibre',
-            'zalando', 'asos', 'flipkart', 'rakuten',
-            '.cn', '.ru', '.in', '.mx', '.br', '.ar'
-        ]
-        
-        # Tiendas estadounidenses CONFIABLES
-        self.trusted_us_stores = [
-            'amazon.com', 'walmart.com', 'target.com', 'bestbuy.com', 'homedepot.com',
-            'lowes.com', 'ebay.com', 'costco.com', 'newegg.com', 'apple.com'
-        ]
-        
-        # Especificaciones importantes (reducidas para optimización)
-        self.specifications = {
-            'colors': ['red', 'blue', 'green', 'black', 'white', 'gray'],
-            'sizes': ['inch', 'inches', 'cm', 'mm', 'small', 'medium', 'large'],
-            'materials': ['paper', 'plastic', 'metal', 'wood', 'fabric'],
-            'brands': ['apple', 'samsung', 'nike', 'sony'],
-            'types': ['adhesive', 'waterproof', 'resistant']
-        }
-    
-    def _get_cache_key(self, query):
-        """Genera clave de cache para la consulta"""
-        return f"search_{hash(query.lower())}"
-    
-    def _is_cache_valid(self, timestamp):
-        """Verifica si el cache es válido"""
-        return (time.time() - timestamp) < self.cache_ttl
+        self.cache_ttl = 180
+        self.timeouts = {'connect': 3, 'read': 8}
+        self.blacklisted_stores = ['alibaba', 'aliexpress', 'temu', 'wish', 'banggood', 'dhgate', 'falabella', 'ripley', 'linio', 'mercadolibre']
     
     def test_api_key(self):
-        """Test optimizado de API key"""
         try:
             params = {'engine': 'google', 'q': 'test', 'api_key': self.api_key, 'num': 1}
-            response = requests.get(
-                self.base_url, 
-                params=params, 
-                timeout=(self.timeouts['connect'], self.timeouts['read'])
-            )
-            
+            response = requests.get(self.base_url, params=params, timeout=(self.timeouts['connect'], self.timeouts['read']))
             if response.status_code != 200:
-                return {'valid': False, 'message': 'API key invalida'}
-            
+                return {'valid': False, 'message': 'API key inválida'}
             data = response.json()
             if 'error' in data:
-                return {'valid': False, 'message': 'API key sin creditos'}
-            
-            return {'valid': True, 'message': 'API key valida'}
-        except requests.Timeout:
-            return {'valid': False, 'message': 'Timeout de conexion'}
-        except Exception:
-            return {'valid': False, 'message': 'Error de conexion'}
+                return {'valid': False, 'message': 'API key sin créditos'}
+            return {'valid': True, 'message': 'API key válida'}
+        except:
+            return {'valid': False, 'message': 'Error de conexión'}
     
     def _extract_price(self, price_str):
-        """Extracción optimizada de precios"""
         if not price_str:
             return 0.0
         try:
-            # Patrón simplificado para mejor rendimiento
-            pattern = r'\$\s*(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)'
-            match = re.search(pattern, str(price_str))
+            match = re.search(r'\$\s*(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)', str(price_str))
             if match:
                 price_value = float(match.group(1).replace(',', ''))
                 return price_value if 0.01 <= price_value <= 50000 else 0.0
@@ -108,297 +146,151 @@ class PriceFinder:
         return 0.0
     
     def _generate_realistic_price(self, query, index=0):
-        """Generación rápida de precios realistas"""
         query_lower = query.lower()
-        
-        # Categorías simplificadas
         if any(word in query_lower for word in ['phone', 'laptop']):
             base_price = 400
         elif any(word in query_lower for word in ['shirt', 'shoes']):
             base_price = 35
         else:
             base_price = 25
-        
-        # Variación simple
-        multiplier = 1 + (index * 0.15)
-        return round(base_price * multiplier, 2)
+        return round(base_price * (1 + index * 0.15), 2)
     
     def _clean_text(self, text):
-        """Limpieza optimizada de texto"""
         if not text:
-            return "Sin informacion"
-        cleaned = html.escape(str(text)[:150])
-        return cleaned
+            return "Sin información"
+        return html.escape(str(text)[:120])
     
-    def _is_blacklisted_store(self, source_or_link):
-        """Verificación optimizada de lista negra"""
-        if not source_or_link:
+    def _is_blacklisted_store(self, source):
+        if not source:
             return False
-        source_lower = str(source_or_link).lower()
-        # Verificación rápida con las tiendas más comunes
-        return any(blocked in source_lower for blocked in self.blacklisted_stores[:10])
-    
-    def _extract_specifications(self, query):
-        """Extracción simplificada de especificaciones"""
-        if not query:
-            return {'colors': [], 'sizes': [], 'materials': []}
-            
-        query_lower = query.lower()
-        found_specs = {'colors': [], 'sizes': [], 'materials': []}
-        
-        # Solo verificar especificaciones críticas para optimizar
-        for category in ['colors', 'sizes', 'materials']:
-            if category in self.specifications:
-                for term in self.specifications[category][:3]:  # Solo primeros 3
-                    if term in query_lower:
-                        found_specs[category].append(term)
-                        break  # Solo una por categoría para optimizar
-        
-        return found_specs
+        return any(blocked in str(source).lower() for blocked in self.blacklisted_stores)
     
     def _get_valid_link(self, item):
-        """Genera un link válido para el producto"""
         if not item:
             return "#"
-        
-        # Prioridad 1: Link directo del producto
         product_link = item.get('product_link', '')
-        if product_link and self._is_valid_url(product_link):
+        if product_link:
             return product_link
-        
-        # Prioridad 2: Link general del item
         general_link = item.get('link', '')
-        if general_link and self._is_valid_url(general_link):
-            # Limpiar redirects de Google
-            if 'url=' in general_link:
-                try:
-                    clean_link = unquote(general_link.split('url=')[1].split('&')[0])
-                    if self._is_valid_url(clean_link):
-                        return clean_link
-                except Exception:
-                    pass
+        if general_link:
             return general_link
-        
-        # Prioridad 3: Generar link de búsqueda específico
         title = item.get('title', '')
-        source = item.get('source', '')
-        
         if title:
-            # Links específicos por tienda
-            search_query = quote_plus(str(title))
-            source_lower = source.lower()
-            
-            if 'amazon' in source_lower:
-                return f"https://www.amazon.com/s?k={search_query}&ref=nb_sb_noss"
-            elif 'walmart' in source_lower:
-                return f"https://www.walmart.com/search?q={search_query}"
-            elif 'target' in source_lower:
-                return f"https://www.target.com/s?searchTerm={search_query}"
-            elif 'bestbuy' in source_lower or 'best buy' in source_lower:
-                return f"https://www.bestbuy.com/site/searchpage.jsp?st={search_query}"
-            elif 'ebay' in source_lower:
-                return f"https://www.ebay.com/sch/i.html?_nkw={search_query}"
-            elif 'homedepot' in source_lower or 'home depot' in source_lower:
-                return f"https://www.homedepot.com/s/{search_query}"
-            elif 'lowes' in source_lower:
-                return f"https://www.lowes.com/search?searchTerm={search_query}"
-            else:
-                # Link genérico de Google Shopping
-                return f"https://www.google.com/search?tbm=shop&q={search_query}"
-        
+            search_query = quote_plus(str(title)[:50])
+            return f"https://www.google.com/search?tbm=shop&q={search_query}"
         return "#"
     
-    def _is_valid_url(self, url):
-        """Verifica si una URL es válida"""
-        if not url or url == "#":
-            return False
-        try:
-            parsed = urlparse(str(url))
-            return bool(parsed.scheme in ['http', 'https'] and parsed.netloc)
-        except Exception:
-            return False
-    
-    def _build_queries(self, query):
-        """Construcción optimizada de consultas"""
-        if not query:
-            return ['buy online']
-            
-        # Máximo 2 consultas para evitar timeouts
-        queries = [
-            f'"{query}" buy online',
-            f'{query} price amazon walmart'
-        ]
-        return queries
-    
     def _make_api_request(self, engine, query):
-        """Request optimizado con manejo de errores"""
-        params = {
-            'engine': engine,
-            'q': query,
-            'api_key': self.api_key,
-            'num': 10,  # Reducido para mejor rendimiento
-            'location': 'United States',
-            'gl': 'us'
-        }
-        
+        params = {'engine': engine, 'q': query, 'api_key': self.api_key, 'num': 5, 'location': 'United States', 'gl': 'us'}
         try:
-            # Delay para evitar rate limiting
-            time.sleep(self.request_delay)
-            
-            response = requests.get(
-                self.base_url, 
-                params=params, 
-                timeout=(self.timeouts['connect'], self.timeouts['read'])
-            )
-            
+            time.sleep(0.3)
+            response = requests.get(self.base_url, params=params, timeout=(self.timeouts['connect'], self.timeouts['read']))
             if response.status_code != 200:
                 return None
-            
             return response.json()
-        except requests.Timeout:
-            print(f"Timeout en request: {query}")
-            return None
         except Exception as e:
             print(f"Error en request: {e}")
             return None
     
-    def _process_results(self, data, engine, original_query):
-        """Procesamiento optimizado de resultados"""
+    def _process_results(self, data, engine):
         if not data:
             return []
-        
         products = []
         results_key = 'shopping_results' if engine == 'google_shopping' else 'organic_results'
-        
         if results_key not in data:
             return []
         
-        # Procesar máximo 5 resultados para optimizar
-        for item in data[results_key][:5]:
+        for item in data[results_key][:3]:
             try:
-                if not item:
+                if not item or self._is_blacklisted_store(item.get('source', '')):
                     continue
-                    
-                if self._is_blacklisted_store(item.get('source', '')):
-                    continue
-                
                 title = item.get('title', '')
                 if not title or len(title) < 3:
                     continue
                 
                 price_str = item.get('price', '')
                 price_num = self._extract_price(price_str)
-                
                 if price_num == 0:
                     price_num = self._generate_realistic_price(title, len(products))
                     price_str = f"${price_num:.2f}"
                 
-                product = {
+                products.append({
                     'title': self._clean_text(title),
                     'price': str(price_str),
                     'price_numeric': float(price_num),
                     'source': self._clean_text(item.get('source', 'Tienda')),
-                    'link': self._get_valid_link(item),  # Usar la nueva función
+                    'link': self._get_valid_link(item),
                     'rating': str(item.get('rating', '')),
                     'reviews': str(item.get('reviews', '')),
                     'image': ''
-                }
-                products.append(product)
-                
-                # Máximo 3 productos por request para optimizar
+                })
                 if len(products) >= 3:
                     break
-                    
             except Exception as e:
                 print(f"Error procesando item: {e}")
                 continue
-        
         return products
     
     def search_products(self, query):
-        """Búsqueda optimizada con cache y timeouts"""
         if not query or len(query) < 2:
             return self._get_examples("producto")
         
-        # Verificar cache primero
-        cache_key = self._get_cache_key(query)
+        cache_key = f"search_{hash(query.lower())}"
         if cache_key in self.cache:
             cache_data, timestamp = self.cache[cache_key]
-            if self._is_cache_valid(timestamp):
+            if (time.time() - timestamp) < self.cache_ttl:
                 return cache_data
         
-        all_products = []
-        queries = self._build_queries(query)
-        
-        # Límite de tiempo total para evitar worker timeout
         start_time = time.time()
-        max_search_time = 12  # máximo 12 segundos
+        all_products = []
         
-        # Intentar Google Shopping primero (más rápido)
-        if time.time() - start_time < max_search_time:
-            data = self._make_api_request('google_shopping', queries[0])
-            products = self._process_results(data, 'google_shopping', query)
+        if time.time() - start_time < 8:
+            query_optimized = f'"{query}" buy online'
+            data = self._make_api_request('google_shopping', query_optimized)
+            products = self._process_results(data, 'google_shopping')
             all_products.extend(products)
         
-        # Si necesitamos más productos y tenemos tiempo
-        if len(all_products) < 3 and time.time() - start_time < max_search_time:
-            data = self._make_api_request('google', queries[1])
-            products = self._process_results(data, 'google', query)
-            all_products.extend(products)
-        
-        # Si no hay productos, usar ejemplos
         if not all_products:
             all_products = self._get_examples(query)
         
-        # Ordenar por precio
         all_products.sort(key=lambda x: x['price_numeric'])
-        final_products = all_products[:8]  # Máximo 8 productos
+        final_products = all_products[:6]
         
-        # Guardar en cache
         self.cache[cache_key] = (final_products, time.time())
-        
-        # Limpiar cache si tiene más de 20 entradas
-        if len(self.cache) > 20:
+        if len(self.cache) > 10:
             oldest_key = min(self.cache.keys(), key=lambda k: self.cache[k][1])
             del self.cache[oldest_key]
         
         return final_products
     
     def _get_examples(self, query):
-        """Ejemplos optimizados con links funcionales"""
         stores = ['Amazon', 'Walmart', 'Target']
         examples = []
-        
-        for i in range(3):  # Solo 3 ejemplos
+        for i in range(3):
             price = self._generate_realistic_price(query, i)
             store = stores[i]
-            
-            # Generar link específico de búsqueda por tienda
-            search_query = quote_plus(str(query))
+            search_query = quote_plus(str(query)[:30])
             if store == 'Amazon':
-                link = f"https://www.amazon.com/s?k={search_query}&ref=nb_sb_noss"
+                link = f"https://www.amazon.com/s?k={search_query}"
             elif store == 'Walmart':
                 link = f"https://www.walmart.com/search?q={search_query}"
-            elif store == 'Target':
-                link = f"https://www.target.com/s?searchTerm={search_query}"
             else:
-                link = f"https://www.google.com/search?tbm=shop&q={search_query}"
+                link = f"https://www.target.com/s?searchTerm={search_query}"
             
             examples.append({
                 'title': f'{self._clean_text(query)} - {["Mejor Precio", "Oferta", "Popular"][i]}',
                 'price': f'${price:.2f}',
                 'price_numeric': price,
                 'source': store,
-                'link': link,  # Link funcional específico
+                'link': link,
                 'rating': ['4.5', '4.2', '4.0'][i],
                 'reviews': ['500', '300', '200'][i],
                 'image': ''
             })
-        
         return examples
 
+# Templates
 def render_page(title, content):
-    """Función optimizada de renderizado"""
     return f'''<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -407,141 +299,239 @@ def render_page(title, content):
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: system-ui, sans-serif; 
-               background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-               min-height: 100vh; padding: 20px; }}
-        .container {{ max-width: 700px; margin: 0 auto; background: white; padding: 30px; 
-                     border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }}
-        h1 {{ color: #1a73e8; text-align: center; margin-bottom: 10px; }}
-        .subtitle {{ text-align: center; color: #666; margin-bottom: 30px; }}
-        input {{ width: 100%; padding: 15px; margin: 10px 0; border: 2px solid #e1e5e9; 
-                border-radius: 8px; font-size: 16px; }}
+        body {{ font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 15px; }}
+        .container {{ max-width: 650px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.15); }}
+        h1 {{ color: #1a73e8; text-align: center; margin-bottom: 8px; font-size: 1.8em; }}
+        .subtitle {{ text-align: center; color: #666; margin-bottom: 25px; }}
+        input {{ width: 100%; padding: 12px; margin: 8px 0; border: 2px solid #e1e5e9; border-radius: 6px; font-size: 16px; }}
         input:focus {{ outline: none; border-color: #1a73e8; }}
-        button {{ width: 100%; padding: 15px; background: #1a73e8; color: white; border: none; 
-                 border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: 600; }}
+        button {{ width: 100%; padding: 12px; background: #1a73e8; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: 600; }}
         button:hover {{ background: #1557b0; }}
-        .search-bar {{ display: flex; gap: 10px; margin-bottom: 25px; }}
+        .search-bar {{ display: flex; gap: 8px; margin-bottom: 20px; }}
         .search-bar input {{ flex: 1; }}
-        .search-bar button {{ width: auto; padding: 15px 25px; }}
-        .tips {{ background: #e8f5e8; border: 1px solid #4caf50; padding: 20px; 
-                border-radius: 8px; margin-bottom: 20px; }}
-        .features {{ background: #f8f9fa; padding: 20px; border-radius: 8px; margin-top: 25px; }}
+        .search-bar button {{ width: auto; padding: 12px 20px; }}
+        .tips {{ background: #e8f5e8; border: 1px solid #4caf50; padding: 15px; border-radius: 6px; margin-bottom: 15px; font-size: 14px; }}
+        .features {{ background: #f8f9fa; padding: 15px; border-radius: 6px; margin-top: 20px; }}
         .features ul {{ list-style: none; }}
-        .features li {{ padding: 5px 0; }}
+        .features li {{ padding: 3px 0; font-size: 14px; }}
         .features li:before {{ content: "✅ "; }}
-        .error {{ background: #ffebee; color: #c62828; padding: 15px; border-radius: 8px; 
-                 margin: 15px 0; display: none; }}
-        .loading {{ text-align: center; padding: 40px; display: none; }}
-        .spinner {{ border: 4px solid #f3f3f3; border-top: 4px solid #1a73e8; border-radius: 50%; 
-                   width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 0 auto 20px; }}
+        .error {{ background: #ffebee; color: #c62828; padding: 12px; border-radius: 6px; margin: 12px 0; display: none; }}
+        .loading {{ text-align: center; padding: 30px; display: none; }}
+        .spinner {{ border: 3px solid #f3f3f3; border-top: 3px solid #1a73e8; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }}
         @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+        .user-info {{ background: #e3f2fd; padding: 12px; border-radius: 6px; margin-bottom: 15px; text-align: center; font-size: 14px; }}
+        .user-info a {{ color: #1976d2; text-decoration: none; font-weight: 600; }}
+        .flash {{ padding: 12px; margin-bottom: 8px; border-radius: 6px; font-size: 14px; }}
+        .flash.success {{ background-color: #d4edda; color: #155724; }}
+        .flash.danger {{ background-color: #f8d7da; color: #721c24; }}
+        .flash.warning {{ background-color: #fff3cd; color: #856404; }}
+        .render-info {{ background: #1a73e8; color: white; padding: 8px; text-align: center; font-size: 12px; margin-bottom: 15px; border-radius: 6px; }}
     </style>
 </head>
 <body>{content}</body>
 </html>'''
 
+AUTH_LOGIN_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar Sesión | Price Finder USA</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #4A90E2 0%, #50E3C2 100%); min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
+        .auth-container { max-width: 420px; width: 100%; background: white; border-radius: 15px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); overflow: hidden; }
+        .form-header { text-align: center; padding: 30px 25px 15px; background: linear-gradient(45deg, #2C3E50, #4A90E2); color: white; }
+        .form-header h1 { font-size: 1.8em; margin-bottom: 8px; }
+        .form-header p { opacity: 0.9; font-size: 1em; }
+        .form-body { padding: 25px; }
+        .render-badge { background: #00d4aa; color: white; padding: 6px 12px; border-radius: 15px; font-size: 12px; font-weight: 600; margin-bottom: 15px; text-align: center; }
+        form { display: flex; flex-direction: column; gap: 18px; }
+        .input-group { display: flex; flex-direction: column; gap: 6px; }
+        .input-group label { font-weight: 600; color: #2C3E50; font-size: 14px; }
+        .input-group input { padding: 14px 16px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 16px; transition: border-color 0.3s ease; }
+        .input-group input:focus { outline: 0; border-color: #4A90E2; }
+        .submit-btn { background: linear-gradient(45deg, #4A90E2, #2980b9); color: white; border: none; padding: 14px 25px; font-size: 16px; font-weight: 600; border-radius: 8px; cursor: pointer; transition: transform 0.2s ease; }
+        .submit-btn:hover { transform: translateY(-2px); }
+        .flash-messages { list-style: none; padding: 0 25px 15px; }
+        .flash { padding: 12px; margin-bottom: 10px; border-radius: 6px; text-align: center; font-size: 14px; }
+        .flash.success { background-color: #d4edda; color: #155724; }
+        .flash.danger { background-color: #f8d7da; color: #721c24; }
+        .flash.warning { background-color: #fff3cd; color: #856404; }
+        .back-link { text-align: center; padding: 15px; background: #f8f9fa; font-size: 13px; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="auth-container">
+        <div class="form-header">
+            <h1>🔐 Price Finder USA</h1>
+            <p>Iniciar Sesión</p>
+        </div>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <ul class="flash-messages">
+                    {% for category, message in messages %}
+                        <li class="flash {{ category }}">{{ message }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        {% endwith %}
+        <div class="form-body">
+            <div class="render-badge">🚀 Desplegado en Render.com</div>
+            <form action="{{ url_for('auth_login') }}" method="post">
+                <div class="input-group">
+                    <label for="email">📧 Correo Electrónico</label>
+                    <input type="email" name="email" id="email" required>
+                </div>
+                <div class="input-group">
+                    <label for="password">🔒 Contraseña</label>
+                    <input type="password" name="password" id="password" required>
+                </div>
+                <button type="submit" class="submit-btn">🚀 Entrar</button>
+            </form>
+        </div>
+        <div class="back-link">⚡ Optimizado para Render.com | Firebase Auth</div>
+    </div>
+</body>
+</html>
+"""
+
+# Routes
+@app.route('/auth/login-page')
+def auth_login_page():
+    return render_template_string(AUTH_LOGIN_TEMPLATE)
+
+@app.route('/auth/login', methods=['POST'])
+def auth_login():
+    email = request.form.get('email', '').strip()
+    password = request.form.get('password', '').strip()
+    
+    if not email or not password:
+        flash('Por favor completa todos los campos.', 'danger')
+        return redirect(url_for('auth_login_page'))
+    
+    print(f"Login attempt for {email}")
+    result = firebase_auth.login_user(email, password)
+    
+    if result['success']:
+        firebase_auth.set_user_session(result['user_data'])
+        flash(result['message'], 'success')
+        print(f"Successful login for {email}")
+        return redirect(url_for('index'))
+    else:
+        flash(result['message'], 'danger')
+        print(f"Failed login for {email}")
+        return redirect(url_for('auth_login_page'))
+
+@app.route('/auth/logout')
+def auth_logout():
+    firebase_auth.clear_user_session()
+    flash('Has cerrado la sesión correctamente.', 'success')
+    return redirect(url_for('auth_login_page'))
+
 @app.route('/')
 def index():
-    content = '''
+    if not firebase_auth.is_user_logged_in():
+        return redirect(url_for('auth_login_page'))
+    
+    current_user = firebase_auth.get_current_user()
+    user_name = current_user['user_name'] if current_user else 'Usuario'
+    
+    content = f'''
     <div class="container">
-        <h1>🇺🇸 Price Finder USA - Optimizado</h1>
-        <p class="subtitle">⚡ Busquedas rapidas - Solo tiendas de EE.UU.</p>
+        <div class="render-info">🚀 Desplegado en Render.com | Firebase Auth Activo</div>
+        <div class="user-info">👋 ¡Hola, <strong>{html.escape(user_name)}</strong>! | <a href="{url_for('auth_logout')}">🚪 Cerrar Sesión</a></div>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash {{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        
+        <h1>🇺🇸 Price Finder USA</h1>
+        <p class="subtitle">⚡ Búsquedas ultra rápidas - Solo tiendas de EE.UU.</p>
         <form id="setupForm">
-            <label for="apiKey">API Key de SerpAPI:</label>
-            <input type="text" id="apiKey" placeholder="Pega aqui tu API key..." required>
+            <label for="apiKey">🔑 API Key de SerpAPI:</label>
+            <input type="text" id="apiKey" placeholder="Pega aquí tu API key..." required>
             <button type="submit">✅ Configurar y Continuar</button>
         </form>
         <div class="features">
-            <h3>⚡ Sistema optimizado:</h3>
+            <h3>⚡ Optimizado para Render.com:</h3>
             <ul>
-                <li>Busquedas ultra rapidas (menos de 15 segundos)</li>
-                <li>Sistema de cache inteligente</li>
-                <li>Timeouts optimizados</li>
-                <li>Uso eficiente de memoria</li>
-                <li><strong>SOLO tiendas estadounidenses</strong></li>
-                <li><strong>Sin Alibaba, Temu, etc.</strong></li>
+                <li>Búsquedas ultra rápidas (menos de 10 segundos)</li>
+                <li>Cache inteligente optimizado</li>
+                <li>SOLO tiendas estadounidenses</li>
+                <li>🔐 Firebase Auth integrado</li>
+                <li>🚀 SSL automático de Render</li>
             </ul>
-            <p style="margin-top: 15px;">
-                <strong>¿No tienes API key?</strong> 
-                <a href="https://serpapi.com/" target="_blank" style="color: #1a73e8;">
-                    Obten una gratis aqui
-                </a>
-            </p>
+            <p style="margin-top: 12px; font-size: 13px;"><strong>¿No tienes API key?</strong> <a href="https://serpapi.com/" target="_blank" style="color: #1a73e8;">Obtén una gratis</a></p>
         </div>
         <div id="error" class="error"></div>
-        <div id="loading" class="loading">
-            <div class="spinner"></div>
-            <p>Validando API key...</p>
-        </div>
+        <div id="loading" class="loading"><div class="spinner"></div><p>⚡ Validando API key...</p></div>
     </div>
     <script>
-        document.getElementById('setupForm').addEventListener('submit', function(e) {
+        document.getElementById('setupForm').addEventListener('submit', function(e) {{
             e.preventDefault();
             const apiKey = document.getElementById('apiKey').value.trim();
             if (!apiKey) return showError('Por favor ingresa tu API key');
             
             showLoading();
+            const timeoutId = setTimeout(() => {{ hideLoading(); showError('Timeout - Intenta de nuevo'); }}, 8000);
             
-            // Timeout del lado cliente también
-            const timeoutId = setTimeout(() => {
-                hideLoading();
-                showError('Timeout - Intenta de nuevo');
-            }, 10000);
-            
-            fetch('/setup', {
+            fetch('/setup', {{
                 method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
                 body: 'api_key=' + encodeURIComponent(apiKey)
-            })
-            .then(response => {
-                clearTimeout(timeoutId);
-                return response.json();
-            })
-            .then(data => {
-                hideLoading();
-                data.success ? window.location.href = '/search' : showError(data.error || 'Error al configurar API key');
-            })
-            .catch(() => { 
-                clearTimeout(timeoutId);
-                hideLoading(); 
-                showError('Error de conexion'); 
-            });
-        });
-        function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
-        function hideLoading() { document.getElementById('loading').style.display = 'none'; }
-        function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
+            }})
+            .then(response => {{ clearTimeout(timeoutId); return response.json(); }})
+            .then(data => {{ hideLoading(); data.success ? window.location.href = '/search' : showError(data.error); }})
+            .catch(() => {{ clearTimeout(timeoutId); hideLoading(); showError('Error de conexión'); }});
+        }});
+        function showLoading() {{ document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }}
+        function hideLoading() {{ document.getElementById('loading').style.display = 'none'; }}
+        function showError(msg) {{ hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }}
     </script>'''
-    return render_page('🇺🇸 Price Finder USA - Optimizado', content)
+    return render_template_string(render_page('🚀 Price Finder USA - Render.com', content))
 
 @app.route('/setup', methods=['POST'])
+@login_required
 def setup_api():
     try:
         api_key = request.form.get('api_key', '').strip()
         if not api_key:
             return jsonify({'error': 'API key requerida'}), 400
         
-        # Test rápido de API key
         price_finder = PriceFinder(api_key)
         test_result = price_finder.test_api_key()
         
         if not test_result.get('valid'):
-            return jsonify({'error': test_result.get('message', 'Error de validacion')}), 400
+            return jsonify({'error': test_result.get('message', 'API key inválida')}), 400
         
         session['api_key'] = api_key
         session.permanent = True
         return jsonify({'success': True, 'message': 'API key configurada correctamente'})
-    except Exception as e:
+    except Exception:
         return jsonify({'error': 'Error interno del servidor'}), 500
 
 @app.route('/search')
+@login_required
 def search_page():
     if 'api_key' not in session:
+        flash('Primero debes configurar tu API key.', 'warning')
         return redirect(url_for('index'))
     
-    content = '''
+    current_user = firebase_auth.get_current_user()
+    user_name = current_user['user_name'] if current_user else 'Usuario'
+    
+    content = f'''
     <div class="container">
+        <div class="render-info">🚀 Render.com | Usuario: {html.escape(user_name)}</div>
+        <div class="user-info">👋 <strong>{html.escape(user_name)}</strong> | <a href="{url_for('auth_logout')}">🚪 Salir</a> | <a href="{url_for('index')}">🏠 Inicio</a></div>
+        
         <h1>🔍 Buscar Productos</h1>
-        <p class="subtitle">⚡ Busqueda optimizada - Resultados en 15 segundos</p>
+        <p class="subtitle">⚡ Optimizado para Render - Resultados en 10 segundos</p>
         <form id="searchForm">
             <div class="search-bar">
                 <input type="text" id="searchQuery" placeholder="Busca cualquier producto..." required>
@@ -549,67 +539,46 @@ def search_page():
             </div>
         </form>
         <div class="tips">
-            <h4>⚡ Busqueda ultra rapida:</h4>
-            <ul style="margin: 10px 0 0 20px;">
-                <li><strong>Sistema optimizado:</strong> Resultados en menos de 15 segundos</li>
-                <li><strong>Cache inteligente:</strong> Busquedas repetidas son instantaneas</li>
-                <li><strong>🇺🇸 Solo EE.UU.:</strong> Amazon, Walmart, Target, Best Buy</li>
-                <li><strong>🚫 Bloqueadas:</strong> Alibaba, Temu, AliExpress</li>
+            <h4>⚡ Sistema optimizado:</h4>
+            <ul style="margin: 8px 0 0 15px; font-size: 13px;">
+                <li><strong>Velocidad:</strong> Resultados en menos de 10 segundos</li>
+                <li><strong>🇺🇸 USA:</strong> Amazon, Walmart, Target, Best Buy</li>
+                <li><strong>🚫 Filtrado:</strong> Sin Alibaba, Temu, AliExpress</li>
+                <li><strong>🔐 Seguro:</strong> Autenticado con Firebase</li>
             </ul>
         </div>
-        <div id="loading" class="loading">
-            <div class="spinner"></div>
-            <h3>⚡ Buscando productos...</h3>
-            <p>Maximo 15 segundos</p>
-        </div>
+        <div id="loading" class="loading"><div class="spinner"></div><h3>⚡ Buscando productos...</h3><p>Máximo 10 segundos</p></div>
         <div id="error" class="error"></div>
     </div>
     <script>
         let searching = false;
-        document.getElementById('searchForm').addEventListener('submit', function(e) {
+        document.getElementById('searchForm').addEventListener('submit', function(e) {{
             e.preventDefault();
             if (searching) return;
             const query = document.getElementById('searchQuery').value.trim();
-            if (!query) return showError('Por favor ingresa un producto para buscar');
+            if (!query) return showError('Por favor ingresa un producto');
             
             searching = true;
             showLoading();
+            const timeoutId = setTimeout(() => {{ searching = false; hideLoading(); showError('Búsqueda muy lenta - Intenta de nuevo'); }}, 15000);
             
-            // Timeout de 20 segundos del lado cliente
-            const timeoutId = setTimeout(() => {
-                searching = false;
-                hideLoading();
-                showError('Busqueda muy lenta - Intenta de nuevo');
-            }, 20000);
-            
-            fetch('/api/search', {
+            fetch('/api/search', {{
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({query: query})
-            })
-            .then(response => {
-                clearTimeout(timeoutId);
-                searching = false;
-                return response.json();
-            })
-            .then(data => {
-                hideLoading();
-                data.success ? window.location.href = '/results' : showError(data.error || 'Error en la busqueda');
-            })
-            .catch(() => { 
-                clearTimeout(timeoutId);
-                searching = false; 
-                hideLoading(); 
-                showError('Error de conexion'); 
-            });
-        });
-        function showLoading() { document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }
-        function hideLoading() { document.getElementById('loading').style.display = 'none'; }
-        function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{query: query}})
+            }})
+            .then(response => {{ clearTimeout(timeoutId); searching = false; return response.json(); }})
+            .then(data => {{ hideLoading(); data.success ? window.location.href = '/results' : showError(data.error); }})
+            .catch(() => {{ clearTimeout(timeoutId); searching = false; hideLoading(); showError('Error de conexión'); }});
+        }});
+        function showLoading() {{ document.getElementById('loading').style.display = 'block'; document.getElementById('error').style.display = 'none'; }}
+        function hideLoading() {{ document.getElementById('loading').style.display = 'none'; }}
+        function showError(msg) {{ hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }}
     </script>'''
-    return render_page('Busqueda Optimizada - Price Finder USA', content)
+    return render_page('Búsqueda - Render.com', content)
 
 @app.route('/api/search', methods=['POST'])
+@login_required
 def api_search():
     try:
         if 'api_key' not in session:
@@ -620,9 +589,11 @@ def api_search():
         if not query:
             return jsonify({'error': 'Consulta requerida'}), 400
         
-        # Límite de longitud de query para optimizar
-        if len(query) > 100:
-            query = query[:100]
+        if len(query) > 80:
+            query = query[:80]
+        
+        user_email = session.get('user_email', 'Unknown')
+        print(f"Search request from {user_email}: {query}")
         
         price_finder = PriceFinder(session['api_key'])
         products = price_finder.search_products(query)
@@ -630,13 +601,15 @@ def api_search():
         session['last_search'] = {
             'query': query,
             'products': products,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'user': user_email
         }
         
+        print(f"Search completed for {user_email}: {len(products)} products found")
         return jsonify({'success': True, 'products': products, 'total': len(products)})
         
     except Exception as e:
-        # Fallback optimizado
+        print(f"Search error: {e}")
         try:
             query = request.get_json().get('query', 'producto') if request.get_json() else 'producto'
             price_finder = PriceFinder('dummy')
@@ -647,25 +620,29 @@ def api_search():
             return jsonify({'error': 'Error interno del servidor'}), 500
 
 @app.route('/results')
+@login_required
 def results_page():
     try:
         if 'last_search' not in session:
+            flash('No hay búsquedas recientes.', 'warning')
             return redirect(url_for('search_page'))
+        
+        current_user = firebase_auth.get_current_user()
+        user_name = current_user['user_name'] if current_user else 'Usuario'
         
         search_data = session['last_search']
         products = search_data.get('products', [])
-        query = html.escape(str(search_data.get('query', 'busqueda')))
+        query = html.escape(str(search_data.get('query', 'búsqueda')))
         
-        # Generar HTML optimizado
         products_html = ""
         badges = ['💰 MEJOR', '🥈 2º', '🥉 3º']
         colors = ['#4caf50', '#ff9800', '#9c27b0']
         
-        for i, product in enumerate(products[:8]):  # Máximo 8 productos
+        for i, product in enumerate(products[:6]):
             if not product:
                 continue
             
-            badge = f'<div style="position: absolute; top: 10px; right: 10px; background: {colors[min(i, 2)]}; color: white; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold;">{badges[min(i, 2)]}</div>' if i < 3 else ''
+            badge = f'<div style="position: absolute; top: 8px; right: 8px; background: {colors[min(i, 2)]}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">{badges[min(i, 2)]}</div>' if i < 3 else ''
             
             title = html.escape(str(product.get('title', 'Producto')))
             price = html.escape(str(product.get('price', '$0.00')))
@@ -673,107 +650,100 @@ def results_page():
             link = html.escape(str(product.get('link', '#')))
             
             products_html += f'''
-                <div style="border: 1px solid #ddd; border-radius: 10px; padding: 20px; margin-bottom: 20px; background: white; position: relative; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: white; position: relative; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
                     {badge}
-                    <h3 style="color: #1a73e8; margin-bottom: 12px; font-size: 18px;">{title}</h3>
-                    <div style="font-size: 32px; color: #2e7d32; font-weight: bold; margin: 15px 0;">
-                        {price} <span style="font-size: 14px; color: #666;">🇺🇸</span>
-                    </div>
-                    <p style="color: #666; margin-bottom: 15px;">🏪 {source}</p>
-                    <a href="{link}" target="_blank" rel="noopener noreferrer" onclick="console.log('Clicking link:', this.href); return true;" style="background: #1a73e8; color: white; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600; display: inline-block; cursor: pointer;">
-                        🛒 Ver Producto
-                    </a>
+                    <h3 style="color: #1a73e8; margin-bottom: 8px; font-size: 16px;">{title}</h3>
+                    <div style="font-size: 28px; color: #2e7d32; font-weight: bold; margin: 12px 0;">{price} <span style="font-size: 12px; color: #666;">🇺🇸</span></div>
+                    <p style="color: #666; margin-bottom: 12px; font-size: 14px;">🏪 {source}</p>
+                    <a href="{link}" target="_blank" rel="noopener noreferrer" style="background: #1a73e8; color: white; padding: 10px 16px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block; font-size: 14px;">🛒 Ver Producto</a>
                 </div>'''
         
-        # Estadísticas optimizadas
         prices = [p.get('price_numeric', 0) for p in products if p.get('price_numeric', 0) > 0]
         stats = ""
         if prices:
             min_price = min(prices)
             avg_price = sum(prices) / len(prices)
             stats = f'''
-                <div style="background: #e8f5e8; border: 1px solid #4caf50; padding: 20px; border-radius: 10px; margin-bottom: 25px;">
-                    <h3 style="color: #2e7d32; margin-bottom: 10px;">⚡ Resultados optimizados 🇺🇸</h3>
+                <div style="background: #e8f5e8; border: 1px solid #4caf50; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                    <h3 style="color: #2e7d32; margin-bottom: 8px;">⚡ Resultados optimizados 🇺🇸</h3>
                     <p><strong>✅ {len(products)} productos encontrados</strong></p>
                     <p><strong>💰 Mejor precio: ${min_price:.2f}</strong></p>
                     <p><strong>📈 Precio promedio: ${avg_price:.2f}</strong></p>
-                    <p><strong>🚫 Tiendas no estadounidenses filtradas</strong></p>
+                    <p><strong>👤 Búsqueda de: {html.escape(user_name)}</strong></p>
                 </div>'''
         
         content = f'''
-        <div style="max-width: 900px; margin: 0 auto;">
-            <h1 style="color: white; text-align: center; margin-bottom: 10px;">🇺🇸 Resultados: "{query}"</h1>
-            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 30px;">⚡ Busqueda optimizada completada</p>
-            <div style="text-align: center; margin-bottom: 25px;">
-                <a href="/search" style="background: white; color: #1a73e8; padding: 12px 20px; text-decoration: none; border-radius: 8px; font-weight: 600;">🔍 Nueva Busqueda</a>
+        <div style="max-width: 800px; margin: 0 auto;">
+            <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
+                <span style="color: white; font-size: 14px;">🚀 Render.com | 👋 <strong>{html.escape(user_name)}</strong> | 
+                <a href="{url_for('auth_logout')}" style="color: #50E3C2;">🚪 Salir</a> | 
+                <a href="{url_for('search_page')}" style="color: #50E3C2;">🔍 Nueva Búsqueda</a></span>
             </div>
+            
+            <h1 style="color: white; text-align: center; margin-bottom: 8px;">🇺🇸 Resultados: "{query}"</h1>
+            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">⚡ Búsqueda completada</p>
+            
             {stats}
             {products_html}
         </div>'''
         
         return render_page('Resultados - Price Finder USA', content)
-    except:
+    except Exception as e:
+        print(f"Results page error: {e}")
+        flash('Error al mostrar resultados.', 'danger')
         return redirect(url_for('search_page'))
 
 @app.route('/api/health')
 def health_check():
-    return jsonify({'status': 'OK', 'timestamp': datetime.now().isoformat()})
+    try:
+        return jsonify({
+            'status': 'OK', 
+            'timestamp': datetime.now().isoformat(),
+            'platform': 'render.com',
+            'firebase_auth': 'enabled' if firebase_auth.firebase_web_api_key else 'disabled'
+        })
+    except Exception as e:
+        return jsonify({'status': 'ERROR', 'message': str(e)}), 500
 
-@app.route('/api/test')
-def test_endpoint():
-    return jsonify({
-        'status': 'SUCCESS',
-        'message': '🇺🇸 Price Finder USA - Optimizado',
-        'version': '10.0 - Sin timeouts',
-        'features': {
-            'optimized_search': True,
-            'cache_system': True,
-            'timeout_protection': True,
-            'memory_efficient': True,
-            'us_stores_only': True,
-            'functional_links': True
-        }
-    })
-
-# Configuración adicional para Gunicorn
+# Middleware
 @app.before_request
 def before_request():
-    """Configuración previa a cada request"""
-    # Limpiar sesiones viejas automáticamente
     if 'timestamp' in session:
         try:
-            # Validar formato de timestamp antes de parsear
             timestamp_str = session['timestamp']
             if isinstance(timestamp_str, str) and len(timestamp_str) > 10:
                 last_activity = datetime.fromisoformat(timestamp_str)
                 time_diff = (datetime.now() - last_activity).total_seconds()
-                if time_diff > 1800:  # 30 minutos
+                if time_diff > 1200:  # 20 minutos
                     session.clear()
-        except (ValueError, TypeError, AttributeError) as e:
-            # Si hay error parseando el timestamp, limpiar sesión
+        except:
             session.clear()
-            print(f"Error parseando timestamp: {e}")
     
     session['timestamp'] = datetime.now().isoformat()
 
 @app.after_request
 def after_request(response):
-    """Configuración posterior a cada request"""
-    # Headers de optimización
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['X-Powered-By'] = 'Render.com'
     return response
 
-# Configuración de Gunicorn optimizada
+# Error handlers
+@app.errorhandler(404)
+def not_found(error):
+    return '<h1>404 - Página no encontrada</h1><p><a href="/">Volver al inicio</a></p>', 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return '<h1>500 - Error interno</h1><p><a href="/">Volver al inicio</a></p>', 500
+
 if __name__ == '__main__':
-    # Configuración para desarrollo
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+    print("🚀 Price Finder USA - Render.com")
+    print(f"Firebase: {'✅' if os.environ.get('FIREBASE_WEB_API_KEY') else '❌'}")
+    print(f"Puerto: {os.environ.get('PORT', '5000')}")
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False, threaded=True)
 else:
-    # Configuración para producción
     import logging
-    logging.basicConfig(level=logging.WARNING)  # Solo warnings y errores
-    
-    # Desactivar logs innecesarios
-    logging.getLogger('requests').setLevel(logging.WARNING)
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s [RENDER] %(message)s')
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)
