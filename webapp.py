@@ -20,9 +20,9 @@ class FirebaseAuth:
     def __init__(self):
         self.firebase_web_api_key = os.environ.get("FIREBASE_WEB_API_KEY")
         if not self.firebase_web_api_key:
-            print("⚠️ FIREBASE_WEB_API_KEY no configurada")
+            print("WARNING: FIREBASE_WEB_API_KEY no configurada")
         else:
-            print("✅ Firebase Auth configurado")
+            print("SUCCESS: Firebase Auth configurado")
     
     def login_user(self, email, password):
         if not self.firebase_web_api_key:
@@ -129,10 +129,10 @@ class PriceFinder:
         self.blacklisted_stores = ['alibaba', 'aliexpress', 'temu', 'wish', 'banggood', 'dhgate', 'falabella', 'ripley', 'linio', 'mercadolibre']
         
         if not self.api_key:
-            print("⚠️ No se encontró API key en variables de entorno")
+            print("WARNING: No se encontró API key en variables de entorno")
             print("Variables verificadas: SERPAPI_KEY, SERPAPI_API_KEY, SERP_API_KEY, serpapi_key, SERPAPI")
         else:
-            print(f"✅ SerpAPI configurado correctamente (key: {self.api_key[:8]}...)")
+            print(f"SUCCESS: SerpAPI configurado correctamente (key: {self.api_key[:8]}...)")
     
     def is_api_configured(self):
         return bool(self.api_key)
@@ -344,7 +344,7 @@ def render_page(title, content):
         .features { background: #f8f9fa; padding: 15px; border-radius: 6px; margin-top: 20px; }
         .features ul { list-style: none; }
         .features li { padding: 3px 0; font-size: 14px; }
-        .features li:before { content: "✅ "; }
+        .features li:before { content: "- "; }
         .error { background: #ffebee; color: #c62828; padding: 12px; border-radius: 6px; margin: 12px 0; display: none; }
         .warning { background: #fff3cd; color: #856404; padding: 12px; border-radius: 6px; margin: 12px 0; }
         .loading { text-align: center; padding: 30px; display: none; }
@@ -393,7 +393,7 @@ AUTH_LOGIN_TEMPLATE = """
 <body>
     <div class="auth-container">
         <div class="form-header">
-            <h1>🔐 Price Finder USA</h1>
+            <h1>Price Finder USA</h1>
             <p>Iniciar Sesión</p>
         </div>
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -408,14 +408,14 @@ AUTH_LOGIN_TEMPLATE = """
         <div class="form-body">
             <form action="{{ url_for('auth_login') }}" method="post">
                 <div class="input-group">
-                    <label for="email">📧 Correo Electrónico</label>
+                    <label for="email">Correo Electrónico</label>
                     <input type="email" name="email" id="email" required>
                 </div>
                 <div class="input-group">
-                    <label for="password">🔒 Contraseña</label>
+                    <label for="password">Contraseña</label>
                     <input type="password" name="password" id="password" required>
                 </div>
-                <button type="submit" class="submit-btn">🚀 Entrar</button>
+                <button type="submit" class="submit-btn">Entrar</button>
             </form>
         </div>
     </div>
@@ -586,7 +586,7 @@ def results_page():
         query = html.escape(str(search_data.get('query', 'búsqueda')))
         
         products_html = ""
-        badges = ['💰 MEJOR', '🥈 2º', '🥉 3º']
+        badges = ['MEJOR', '2º', '3º']
         colors = ['#4caf50', '#ff9800', '#9c27b0']
         
         for i, product in enumerate(products[:6]):
@@ -604,9 +604,9 @@ def results_page():
                 <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: white; position: relative; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
                     ''' + badge + '''
                     <h3 style="color: #1a73e8; margin-bottom: 8px; font-size: 16px;">''' + title + '''</h3>
-                    <div style="font-size: 28px; color: #2e7d32; font-weight: bold; margin: 12px 0;">''' + price + ''' <span style="font-size: 12px; color: #666;">🇺🇸</span></div>
-                    <p style="color: #666; margin-bottom: 12px; font-size: 14px;">🏪 ''' + source + '''</p>
-                    <a href="''' + link + '''" target="_blank" rel="noopener noreferrer" style="background: #1a73e8; color: white; padding: 10px 16px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block; font-size: 14px;">🛒 Ver Producto</a>
+                    <div style="font-size: 28px; color: #2e7d32; font-weight: bold; margin: 12px 0;">''' + price + ''' <span style="font-size: 12px; color: #666;">USD</span></div>
+                    <p style="color: #666; margin-bottom: 12px; font-size: 14px;">Tienda: ''' + source + '''</p>
+                    <a href="''' + link + '''" target="_blank" rel="noopener noreferrer" style="background: #1a73e8; color: white; padding: 10px 16px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block; font-size: 14px;">Ver Producto</a>
                 </div>'''
         
         prices = [p.get('price_numeric', 0) for p in products if p.get('price_numeric', 0) > 0]
@@ -624,12 +624,12 @@ def results_page():
         <div style="max-width: 800px; margin: 0 auto;">
             <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
                 <span style="color: white; font-size: 14px;">Hola <strong>''' + user_name_escaped + '''</strong> | 
-                <a href="''' + url_for('auth_logout') + '''" style="color: #50E3C2;">🚪 Salir</a> | 
-                <a href="''' + url_for('search_page') + '''" style="color: #50E3C2;">🔍 Nueva Búsqueda</a></span>
+                <a href="''' + url_for('auth_logout') + '''" style="color: #50E3C2;">Salir</a> | 
+                <a href="''' + url_for('search_page') + '''" style="color: #50E3C2;">Nueva Búsqueda</a></span>
             </div>
             
-            <h1 style="color: white; text-align: center; margin-bottom: 8px;">🇺🇸 Resultados: "''' + query + '''"</h1>
-            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">⚡ Búsqueda completada</p>
+            <h1 style="color: white; text-align: center; margin-bottom: 8px;">Resultados: "''' + query + '''"</h1>
+            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">Búsqueda completada</p>
             
             ''' + stats + '''
             ''' + products_html + '''
@@ -686,9 +686,9 @@ def internal_error(error):
     return '<h1>500 - Error interno</h1><p><a href="/">Volver al inicio</a></p>', 500
 
 if __name__ == '__main__':
-    print("🚀 Price Finder USA")
-    print(f"Firebase: {'✅' if os.environ.get('FIREBASE_WEB_API_KEY') else '❌'}")
-    print(f"SerpAPI: {'✅' if os.environ.get('SERPAPI_KEY') else '❌'}")
+    print("Price Finder USA - Starting...")
+    print(f"Firebase: {'OK' if os.environ.get('FIREBASE_WEB_API_KEY') else 'NOT_CONFIGURED'}")
+    print(f"SerpAPI: {'OK' if os.environ.get('SERPAPI_KEY') else 'NOT_CONFIGURED'}")
     print(f"Puerto: {os.environ.get('PORT', '5000')}")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False, threaded=True)
 else:
