@@ -325,7 +325,6 @@ def render_page(title, content):
         .flash.success { background-color: #d4edda; color: #155724; }
         .flash.danger { background-color: #f8d7da; color: #721c24; }
         .flash.warning { background-color: #fff3cd; color: #856404; }
-        .render-info { background: #1a73e8; color: white; padding: 8px; text-align: center; font-size: 12px; margin-bottom: 15px; border-radius: 6px; }
     </style>
 </head>
 <body>''' + content + '''</body>
@@ -346,7 +345,6 @@ AUTH_LOGIN_TEMPLATE = """
         .form-header h1 { font-size: 1.8em; margin-bottom: 8px; }
         .form-header p { opacity: 0.9; font-size: 1em; }
         .form-body { padding: 25px; }
-        .render-badge { background: #00d4aa; color: white; padding: 6px 12px; border-radius: 15px; font-size: 12px; font-weight: 600; margin-bottom: 15px; text-align: center; }
         form { display: flex; flex-direction: column; gap: 18px; }
         .input-group { display: flex; flex-direction: column; gap: 6px; }
         .input-group label { font-weight: 600; color: #2C3E50; font-size: 14px; }
@@ -359,7 +357,6 @@ AUTH_LOGIN_TEMPLATE = """
         .flash.success { background-color: #d4edda; color: #155724; }
         .flash.danger { background-color: #f8d7da; color: #721c24; }
         .flash.warning { background-color: #fff3cd; color: #856404; }
-        .back-link { text-align: center; padding: 15px; background: #f8f9fa; font-size: 13px; color: #666; }
     </style>
 </head>
 <body>
@@ -378,7 +375,6 @@ AUTH_LOGIN_TEMPLATE = """
             {% endif %}
         {% endwith %}
         <div class="form-body">
-            <div class="render-badge">🚀 Desplegado en Render.com</div>
             <form action="{{ url_for('auth_login') }}" method="post">
                 <div class="input-group">
                     <label for="email">📧 Correo Electrónico</label>
@@ -391,7 +387,6 @@ AUTH_LOGIN_TEMPLATE = """
                 <button type="submit" class="submit-btn">🚀 Entrar</button>
             </form>
         </div>
-        <div class="back-link">⚡ Optimizado para Render.com | Firebase Auth</div>
     </div>
 </body>
 </html>
@@ -442,7 +437,6 @@ def index():
     # Usar concatenación normal en lugar de f-string para evitar conflictos con Jinja2
     content = '''
     <div class="container">
-        <div class="render-info">🚀 Desplegado en Render.com | Firebase Auth Activo</div>
         <div class="user-info">👋 ¡Hola, <strong>''' + user_name_escaped + '''</strong>! | <a href="''' + url_for('auth_logout') + '''">🚪 Cerrar Sesión</a></div>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
@@ -461,13 +455,13 @@ def index():
             <button type="submit">✅ Configurar y Continuar</button>
         </form>
         <div class="features">
-            <h3>⚡ Optimizado para Render.com:</h3>
+            <h3>⚡ Sistema optimizado:</h3>
             <ul>
                 <li>Búsquedas ultra rápidas (menos de 10 segundos)</li>
                 <li>Cache inteligente optimizado</li>
                 <li>SOLO tiendas estadounidenses</li>
                 <li>🔐 Firebase Auth integrado</li>
-                <li>🚀 SSL automático de Render</li>
+                <li>🚀 SSL automático incluido</li>
             </ul>
             <p style="margin-top: 12px; font-size: 13px;"><strong>¿No tienes API key?</strong> <a href="https://serpapi.com/" target="_blank" style="color: #1a73e8;">Obtén una gratis</a></p>
         </div>
@@ -496,7 +490,7 @@ def index():
         function hideLoading() { document.getElementById('loading').style.display = 'none'; }
         function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
     </script>'''
-    return render_template_string(render_page('🚀 Price Finder USA - Render.com', content))
+    return render_template_string(render_page('🚀 Price Finder USA', content))
 
 @app.route('/setup', methods=['POST'])
 @login_required
@@ -531,11 +525,10 @@ def search_page():
     
     content = '''
     <div class="container">
-        <div class="render-info">🚀 Render.com | Usuario: ''' + user_name_escaped + '''</div>
         <div class="user-info">👋 <strong>''' + user_name_escaped + '''</strong> | <a href="''' + url_for('auth_logout') + '''">🚪 Salir</a> | <a href="''' + url_for('index') + '''">🏠 Inicio</a></div>
         
         <h1>🔍 Buscar Productos</h1>
-        <p class="subtitle">⚡ Optimizado para Render - Resultados en 10 segundos</p>
+        <p class="subtitle">⚡ Resultados en 10 segundos</p>
         <form id="searchForm">
             <div class="search-bar">
                 <input type="text" id="searchQuery" placeholder="Busca cualquier producto..." required>
@@ -579,7 +572,7 @@ def search_page():
         function hideLoading() { document.getElementById('loading').style.display = 'none'; }
         function showError(msg) { hideLoading(); const e = document.getElementById('error'); e.textContent = msg; e.style.display = 'block'; }
     </script>'''
-    return render_template_string(render_page('Búsqueda - Render.com', content))
+    return render_template_string(render_page('Búsqueda', content))
 
 @app.route('/api/search', methods=['POST'])
 @login_required
@@ -670,17 +663,14 @@ def results_page():
             avg_price = sum(prices) / len(prices)
             stats = '''
                 <div style="background: #e8f5e8; border: 1px solid #4caf50; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <h3 style="color: #2e7d32; margin-bottom: 8px;">⚡ Resultados optimizados 🇺🇸</h3>
+                    <h3 style="color: #2e7d32; margin-bottom: 8px;">⚡ Resultados de búsqueda 🇺🇸</h3>
                     <p><strong>✅ ''' + str(len(products)) + ''' productos encontrados</strong></p>
-                    <p><strong>💰 Mejor precio: $''' + f'{min_price:.2f}' + '''</strong></p>
-                    <p><strong>📈 Precio promedio: $''' + f'{avg_price:.2f}' + '''</strong></p>
-                    <p><strong>👤 Búsqueda de: ''' + user_name_escaped + '''</strong></p>
-                </div>'''
+                    <p><strong>💰 Mejor precio: 
         
         content = '''
         <div style="max-width: 800px; margin: 0 auto;">
             <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
-                <span style="color: white; font-size: 14px;">🚀 Render.com | 👋 <strong>''' + user_name_escaped + '''</strong> | 
+                <span style="color: white; font-size: 14px;">👋 <strong>''' + user_name_escaped + '''</strong> | 
                 <a href="''' + url_for('auth_logout') + '''" style="color: #50E3C2;">🚪 Salir</a> | 
                 <a href="''' + url_for('search_page') + '''" style="color: #50E3C2;">🔍 Nueva Búsqueda</a></span>
             </div>
@@ -704,7 +694,6 @@ def health_check():
         return jsonify({
             'status': 'OK', 
             'timestamp': datetime.now().isoformat(),
-            'platform': 'render.com',
             'firebase_auth': 'enabled' if firebase_auth.firebase_web_api_key else 'disabled'
         })
     except Exception as e:
@@ -731,7 +720,6 @@ def after_request(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    response.headers['X-Powered-By'] = 'Render.com'
     return response
 
 # Error handlers
@@ -744,11 +732,162 @@ def internal_error(error):
     return '<h1>500 - Error interno</h1><p><a href="/">Volver al inicio</a></p>', 500
 
 if __name__ == '__main__':
-    print("🚀 Price Finder USA - Render.com")
+    print("🚀 Price Finder USA")
     print(f"Firebase: {'✅' if os.environ.get('FIREBASE_WEB_API_KEY') else '❌'}")
     print(f"Puerto: {os.environ.get('PORT', '5000')}")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False, threaded=True)
 else:
     import logging
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s [RENDER] %(message)s')
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)'' + f'{min_price:.2f}' + '''</strong></p>
+                    <p><strong>📈 Precio promedio: 
+        
+        content = '''
+        <div style="max-width: 800px; margin: 0 auto;">
+            <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
+                <span style="color: white; font-size: 14px;">👋 <strong>''' + user_name_escaped + '''</strong> | 
+                <a href="''' + url_for('auth_logout') + '''" style="color: #50E3C2;">🚪 Salir</a> | 
+                <a href="''' + url_for('search_page') + '''" style="color: #50E3C2;">🔍 Nueva Búsqueda</a></span>
+            </div>
+            
+            <h1 style="color: white; text-align: center; margin-bottom: 8px;">🇺🇸 Resultados: "''' + query + '''"</h1>
+            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">⚡ Búsqueda completada</p>
+            
+            ''' + stats + '''
+            ''' + products_html + '''
+        </div>'''
+        
+        return render_template_string(render_page('Resultados - Price Finder USA', content))
+    except Exception as e:
+        print(f"Results page error: {e}")
+        flash('Error al mostrar resultados.', 'danger')
+        return redirect(url_for('search_page'))
+
+@app.route('/api/health')
+def health_check():
+    try:
+        return jsonify({
+            'status': 'OK', 
+            'timestamp': datetime.now().isoformat(),
+            'firebase_auth': 'enabled' if firebase_auth.firebase_web_api_key else 'disabled'
+        })
+    except Exception as e:
+        return jsonify({'status': 'ERROR', 'message': str(e)}), 500
+
+# Middleware
+@app.before_request
+def before_request():
+    if 'timestamp' in session:
+        try:
+            timestamp_str = session['timestamp']
+            if isinstance(timestamp_str, str) and len(timestamp_str) > 10:
+                last_activity = datetime.fromisoformat(timestamp_str)
+                time_diff = (datetime.now() - last_activity).total_seconds()
+                if time_diff > 1200:  # 20 minutos
+                    session.clear()
+        except:
+            session.clear()
+    
+    session['timestamp'] = datetime.now().isoformat()
+
+@app.after_request
+def after_request(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return response
+
+# Error handlers
+@app.errorhandler(404)
+def not_found(error):
+    return '<h1>404 - Página no encontrada</h1><p><a href="/">Volver al inicio</a></p>', 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return '<h1>500 - Error interno</h1><p><a href="/">Volver al inicio</a></p>', 500
+
+if __name__ == '__main__':
+    print("🚀 Price Finder USA")
+    print(f"Firebase: {'✅' if os.environ.get('FIREBASE_WEB_API_KEY') else '❌'}")
+    print(f"Puerto: {os.environ.get('PORT', '5000')}")
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False, threaded=True)
+else:
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)'' + f'{avg_price:.2f}' + '''</strong></p>
+                    <p><strong>👤 Búsqueda de: ''' + user_name_escaped + '''</strong></p>
+                </div>'''
+        
+        content = '''
+        <div style="max-width: 800px; margin: 0 auto;">
+            <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center;">
+                <span style="color: white; font-size: 14px;">👋 <strong>''' + user_name_escaped + '''</strong> | 
+                <a href="''' + url_for('auth_logout') + '''" style="color: #50E3C2;">🚪 Salir</a> | 
+                <a href="''' + url_for('search_page') + '''" style="color: #50E3C2;">🔍 Nueva Búsqueda</a></span>
+            </div>
+            
+            <h1 style="color: white; text-align: center; margin-bottom: 8px;">🇺🇸 Resultados: "''' + query + '''"</h1>
+            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">⚡ Búsqueda completada</p>
+            
+            ''' + stats + '''
+            ''' + products_html + '''
+        </div>'''
+        
+        return render_template_string(render_page('Resultados - Price Finder USA', content))
+    except Exception as e:
+        print(f"Results page error: {e}")
+        flash('Error al mostrar resultados.', 'danger')
+        return redirect(url_for('search_page'))
+
+@app.route('/api/health')
+def health_check():
+    try:
+        return jsonify({
+            'status': 'OK', 
+            'timestamp': datetime.now().isoformat(),
+            'firebase_auth': 'enabled' if firebase_auth.firebase_web_api_key else 'disabled'
+        })
+    except Exception as e:
+        return jsonify({'status': 'ERROR', 'message': str(e)}), 500
+
+# Middleware
+@app.before_request
+def before_request():
+    if 'timestamp' in session:
+        try:
+            timestamp_str = session['timestamp']
+            if isinstance(timestamp_str, str) and len(timestamp_str) > 10:
+                last_activity = datetime.fromisoformat(timestamp_str)
+                time_diff = (datetime.now() - last_activity).total_seconds()
+                if time_diff > 1200:  # 20 minutos
+                    session.clear()
+        except:
+            session.clear()
+    
+    session['timestamp'] = datetime.now().isoformat()
+
+@app.after_request
+def after_request(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return response
+
+# Error handlers
+@app.errorhandler(404)
+def not_found(error):
+    return '<h1>404 - Página no encontrada</h1><p><a href="/">Volver al inicio</a></p>', 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return '<h1>500 - Error interno</h1><p><a href="/">Volver al inicio</a></p>', 500
+
+if __name__ == '__main__':
+    print("🚀 Price Finder USA")
+    print(f"Firebase: {'✅' if os.environ.get('FIREBASE_WEB_API_KEY') else '❌'}")
+    print(f"Puerto: {os.environ.get('PORT', '5000')}")
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False, threaded=True)
+else:
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
     logging.getLogger('werkzeug').setLevel(logging.WARNING)
