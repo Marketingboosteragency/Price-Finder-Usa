@@ -474,7 +474,13 @@ def search_page():
     
     content = '''
     <div class="container">
-        <div class="user-info"><strong>''' + user_name_escaped + '''</strong> | <a href="''' + url_for('auth_logout') + '''">Salir</a> | <a href="''' + url_for('index') + '''">Inicio</a></div>
+        <div class="user-info">
+            <span>Hola, <strong>''' + user_name_escaped + '''</strong></span>
+            <div style="display: inline-block; margin-left: 15px;">
+                <a href="''' + url_for('auth_logout') + '''" style="background: #dc3545; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px; margin-right: 8px;">Salir</a>
+                <a href="''' + url_for('index') + '''" style="background: #28a745; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px;">Inicio</a>
+            </div>
+        </div>
         
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
